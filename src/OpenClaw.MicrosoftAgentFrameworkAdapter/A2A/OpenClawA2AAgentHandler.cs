@@ -113,9 +113,7 @@ public sealed class OpenClawA2AAgentHandler : IAgentHandler
         string? pendingDelta = null;
 
         await updater.SubmitAsync(cancellationToken);
-        await updater.StartWorkAsync(
-            CreateAgentMessage("Streaming response started.", taskId, contextId),
-            cancellationToken);
+        await updater.StartWorkAsync(null!, cancellationToken);
 
         try
         {

@@ -229,6 +229,7 @@ public sealed class A2AHttpEndpointTests
         Assert.Equal(TaskState.Submitted, events[0].Task!.Status!.State);
         Assert.Equal(StreamResponseCase.StatusUpdate, events[1].PayloadCase);
         Assert.Equal(TaskState.Working, events[1].StatusUpdate!.Status!.State);
+        Assert.Null(events[1].StatusUpdate!.Status!.Message);
     }
 
     [Fact]
