@@ -319,7 +319,34 @@
             background: white;
         }
 
-        #a2ui-root {
+        #a2ui-surfaces {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        #a2ui-tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .a2ui-tab {
+            border: 1px solid var(--separator-strong);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-secondary);
+            padding: 0.35rem 0.75rem;
+            cursor: pointer;
+        }
+
+        .a2ui-tab.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        #a2ui-surface-host {
             display: flex;
             flex-direction: column;
             gap: 0.75rem;
@@ -900,7 +927,10 @@
             </div>
             <div id="canvas-surface">
                 <iframe id="canvas-html-frame" title="Canvas HTML" sandbox="allow-scripts" hidden></iframe>
-                <div id="a2ui-root"></div>
+                <div id="a2ui-surfaces">
+                    <div id="a2ui-tabs" aria-label="A2UI surfaces"></div>
+                    <div id="a2ui-surface-host"></div>
+                </div>
             </div>
         </section>
 
@@ -989,7 +1019,9 @@
         const canvasPanel = document.getElementById('canvas-panel');
         const canvasStatus = document.getElementById('canvas-status');
         const canvasHtmlFrame = document.getElementById('canvas-html-frame');
-        const a2uiRoot = document.getElementById('a2ui-root');
+        const a2uiSurfaces = document.getElementById('a2ui-surfaces');
+        const a2uiTabs = document.getElementById('a2ui-tabs');
+        const a2uiSurfaceHost = document.getElementById('a2ui-surface-host');
         const TOKEN_KEY_PERSIST = 'openclaw_token';
         const TOKEN_KEY_SESSION = 'openclaw_token_session';
 
@@ -1009,9 +1041,8 @@
         let liveAudioProcessor = null;
         let canvasSessionId = null;
         let canvasEventSequence = 0;
-        let canvasFrames = [];
-        let canvasValues = {};
-        let canvasDiagnostics = [];
+        const canvasSurfaces = new Map();
+        let activeCanvasSurfaceId = 'main';
 
         const WEBCHAT_CONFIG = {
             streamRenderDebounceMs: Math.max(20, Number(window.OPENCLAW_WEBCHAT_CONFIG?.streamRenderDebounceMs ?? 120)),
@@ -1654,12 +1685,26 @@
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             ws.send(JSON.stringify({
                 type: 'canvas_ready',
-                capabilities: ['a2ui.v0_8', 'canvas.present', 'canvas.hide', 'canvas.local_html', 'snapshot.state']
+                capabilities: ['a2ui.v0_8', 'a2ui.v0_9', 'canvas.present', 'canvas.hide', 'canvas.local_html', 'snapshot.state'],
+                supportedCatalogIds: ['urn:a2ui:catalog:openclaw_v0_8', 'urn:a2ui:catalog:agenui_catalog']
             }));
         }
 
         function isCanvasEnvelopeType(type) {
-            return ['canvas_present', 'canvas_hide', 'canvas_navigate', 'canvas_snapshot', 'a2ui_push', 'a2ui_reset', 'a2ui_eval'].includes(type);
+            return [
+                'canvas_present',
+                'canvas_hide',
+                'canvas_navigate',
+                'canvas_snapshot',
+                'a2ui_push',
+                'a2ui_reset',
+                'a2ui_eval',
+                'a2ui_create_surface',
+                'a2ui_update_components',
+                'a2ui_update_data_model',
+                'a2ui_delete_surface',
+                'a2ui_sync_ui_to_data'
+            ].includes(type);
         }
 
         function sendCanvasAck(env, success = true, error = null) {
@@ -1684,14 +1729,72 @@
             canvasStatus.textContent = 'Hidden';
         }
 
-        function resetA2ui() {
-            canvasFrames = [];
-            canvasValues = {};
-            canvasDiagnostics = [];
-            a2uiRoot.innerHTML = '';
-            a2uiRoot.hidden = false;
+        function getCanvasSurface(surfaceId = 'main') {
+            const id = surfaceId || 'main';
+            let surface = canvasSurfaces.get(id);
+            if (!surface) {
+                surface = {
+                    surfaceId: id,
+                    catalogId: 'urn:a2ui:catalog:openclaw_v0_8',
+                    protocolVersion: 'v0_8',
+                    title: id === 'main' ? 'Main' : id,
+                    components: [],
+                    dataModelJson: null,
+                    dataModel: null,
+                    values: {},
+                    diagnostics: [],
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                    deleted: false
+                };
+                canvasSurfaces.set(id, surface);
+            }
+            return surface;
+        }
+
+        function setActiveCanvasSurface(surfaceId) {
+            if (!canvasSurfaces.has(surfaceId)) return;
+            activeCanvasSurfaceId = surfaceId;
+            renderCanvasSurfaces();
+        }
+
+        function renderCanvasSurfaces() {
+            a2uiTabs.innerHTML = '';
+            for (const surface of canvasSurfaces.values()) {
+                if (surface.deleted) continue;
+                const tab = document.createElement('button');
+                tab.type = 'button';
+                tab.className = `a2ui-tab${surface.surfaceId === activeCanvasSurfaceId ? ' active' : ''}`;
+                tab.textContent = surface.title || surface.surfaceId;
+                tab.addEventListener('click', () => setActiveCanvasSurface(surface.surfaceId));
+                a2uiTabs.appendChild(tab);
+            }
+
+            a2uiSurfaceHost.innerHTML = '';
+            const surface = activeCanvasSurfaceId ? canvasSurfaces.get(activeCanvasSurfaceId) : null;
+            if (!surface || surface.deleted) return;
+            for (const component of surface.components) {
+                renderA2uiFrame(component, surface.surfaceId, surface);
+            }
+        }
+
+        function parseA2UiComponent(component) {
+            return typeof component === 'string' ? JSON.parse(component) : component;
+        }
+
+        function resetA2ui(surfaceId = 'main') {
+            const surface = getCanvasSurface(surfaceId);
+            surface.components = [];
+            surface.values = {};
+            surface.diagnostics = [];
+            surface.dataModelJson = null;
+            surface.dataModel = null;
+            surface.updatedAt = new Date().toISOString();
+            activeCanvasSurfaceId = surface.surfaceId;
+            a2uiSurfaces.hidden = false;
             canvasHtmlFrame.hidden = true;
             canvasHtmlFrame.removeAttribute('srcdoc');
+            renderCanvasSurfaces();
             canvasStatus.textContent = 'Reset';
         }
 
@@ -1711,11 +1814,26 @@
                         handleCanvasNavigate(env);
                         break;
                     case 'a2ui_reset':
-                        resetA2ui();
+                        resetA2ui(env.surfaceId || 'main');
                         sendCanvasAck(env);
                         break;
                     case 'a2ui_push':
                         handleA2uiPush(env);
+                        break;
+                    case 'a2ui_create_surface':
+                        handleA2uiCreateSurface(env);
+                        break;
+                    case 'a2ui_update_components':
+                        handleA2uiUpdateComponents(env);
+                        break;
+                    case 'a2ui_update_data_model':
+                        handleA2uiUpdateDataModel(env);
+                        break;
+                    case 'a2ui_delete_surface':
+                        handleA2uiDeleteSurface(env);
+                        break;
+                    case 'a2ui_sync_ui_to_data':
+                        handleA2uiSyncUiToData(env);
                         break;
                     case 'canvas_snapshot':
                         sendCanvasSnapshot(env);
@@ -1726,7 +1844,7 @@
                 }
             } catch (error) {
                 const message = String(error?.message || error);
-                canvasDiagnostics.push(message);
+                getCanvasSurface(env.surfaceId || activeCanvasSurfaceId || 'main').diagnostics.push(message);
                 sendCanvasAck(env, false, message);
             }
         }
@@ -1735,7 +1853,7 @@
             showCanvas();
             if (env.html) {
                 canvasHtmlFrame.hidden = false;
-                a2uiRoot.hidden = true;
+                a2uiSurfaces.hidden = true;
                 canvasHtmlFrame.srcdoc = env.html;
                 canvasStatus.textContent = 'Local HTML';
                 sendCanvasAck(env);
@@ -1757,67 +1875,219 @@
         function handleA2uiPush(env) {
             showCanvas();
             canvasHtmlFrame.hidden = true;
-            a2uiRoot.hidden = false;
+            a2uiSurfaces.hidden = false;
+            const surface = getCanvasSurface(env.surfaceId || 'main');
+            surface.catalogId = surface.catalogId || 'urn:a2ui:catalog:openclaw_v0_8';
+            surface.protocolVersion = 'v0_8';
+            surface.deleted = false;
             const lines = String(env.frames || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
             for (const line of lines) {
-                const frame = JSON.parse(line);
-                canvasFrames.push(frame);
-                renderA2uiFrame(frame, env.surfaceId || 'main');
+                surface.components.push(JSON.parse(line));
             }
-            canvasStatus.textContent = `${lines.length} frame${lines.length === 1 ? '' : 's'}`;
+            surface.updatedAt = new Date().toISOString();
+            activeCanvasSurfaceId = surface.surfaceId;
+            renderCanvasSurfaces();
+            canvasStatus.textContent = `${surface.title || surface.surfaceId}: ${lines.length} frame${lines.length === 1 ? '' : 's'}`;
             sendCanvasAck(env);
         }
 
-        function renderA2uiFrame(frame, surfaceId) {
+        function handleA2uiCreateSurface(env) {
+            showCanvas();
+            canvasHtmlFrame.hidden = true;
+            a2uiSurfaces.hidden = false;
+            const surface = getCanvasSurface(env.surfaceId || 'main');
+            surface.catalogId = env.catalogId || surface.catalogId || 'urn:a2ui:catalog:agenui_catalog';
+            surface.protocolVersion = 'v0_9';
+            surface.title = env.surfaceTitle || surface.title || surface.surfaceId;
+            surface.components = Array.isArray(env.components) ? env.components.map(parseA2UiComponent) : [];
+            surface.dataModelJson = env.dataModelJson || null;
+            surface.dataModel = surface.dataModelJson ? JSON.parse(surface.dataModelJson) : null;
+            surface.values = {};
+            surface.diagnostics = [];
+            surface.deleted = false;
+            surface.updatedAt = new Date().toISOString();
+            activeCanvasSurfaceId = surface.surfaceId;
+            renderCanvasSurfaces();
+            canvasStatus.textContent = `Surface ${surface.title || surface.surfaceId} created`;
+            sendCanvasAck(env);
+        }
+
+        function handleA2uiUpdateComponents(env) {
+            showCanvas();
+            canvasHtmlFrame.hidden = true;
+            a2uiSurfaces.hidden = false;
+            const surface = getCanvasSurface(env.surfaceId || 'main');
+            if (env.catalogId) surface.catalogId = env.catalogId;
+            surface.protocolVersion = 'v0_9';
+            surface.components = Array.isArray(env.components) ? env.components.map(parseA2UiComponent) : [];
+            surface.deleted = false;
+            surface.updatedAt = new Date().toISOString();
+            activeCanvasSurfaceId = surface.surfaceId;
+            renderCanvasSurfaces();
+            canvasStatus.textContent = `${surface.title || surface.surfaceId}: ${surface.components.length} component${surface.components.length === 1 ? '' : 's'}`;
+            sendCanvasAck(env);
+        }
+
+        function handleA2uiUpdateDataModel(env) {
+            const surface = getCanvasSurface(env.surfaceId || 'main');
+            surface.dataModelJson = env.dataModelJson || '{}';
+            surface.dataModel = JSON.parse(surface.dataModelJson);
+            surface.updatedAt = new Date().toISOString();
+            renderCanvasSurfaces();
+            canvasStatus.textContent = `${surface.title || surface.surfaceId}: data updated`;
+            sendCanvasAck(env);
+        }
+
+        function handleA2uiDeleteSurface(env) {
+            const id = env.surfaceId || 'main';
+            const surface = canvasSurfaces.get(id);
+            if (surface) surface.deleted = true;
+            canvasSurfaces.delete(id);
+            if (activeCanvasSurfaceId === id) {
+                activeCanvasSurfaceId = canvasSurfaces.keys().next().value || null;
+            }
+            renderCanvasSurfaces();
+            canvasStatus.textContent = `Surface ${id} deleted`;
+            sendCanvasAck(env);
+        }
+
+        function handleA2uiSyncUiToData(env) {
+            const surface = getCanvasSurface(env.surfaceId || 'main');
+            const dataModelJson = syncedDataModelJson(surface);
+            ws.send(JSON.stringify({
+                type: 'a2ui_sync_result',
+                requestId: env.requestId,
+                sessionId: canvasSessionId,
+                surfaceId: surface.surfaceId,
+                componentId: env.componentId || null,
+                syncMode: env.syncMode || null,
+                success: true,
+                dataModelJson,
+                valueJson: dataModelJson
+            }));
+            sendCanvasAck(env);
+        }
+
+        const A2UI_TYPE_ALIASES = {
+            text: 'Text',
+            markdown: 'Markdown',
+            card: 'Card',
+            button: 'Button',
+            input: 'TextField',
+            select: 'ChoicePicker',
+            checklist: 'CheckBox',
+            table: 'Table',
+            image: 'Image',
+            progress: 'Slider',
+            chart: 'Chart'
+        };
+
+        const A2UI_RENDERERS = {
+            Text: renderA2uiText,
+            Markdown: renderA2uiMarkdown,
+            RichText: renderA2uiMarkdown,
+            Button: renderA2uiButton,
+            TextField: renderA2uiInput,
+            CheckBox: renderA2uiCheckBox,
+            Slider: renderA2uiProgress,
+            ChoicePicker: renderA2uiSelect,
+            DateTimeInput: renderA2uiDateTimeInput,
+            Row: renderA2uiContainer,
+            Column: renderA2uiContainer,
+            Card: renderA2uiCard,
+            List: renderA2uiList,
+            Tabs: renderA2uiTabs,
+            Modal: renderA2uiCard,
+            Table: renderA2uiTable,
+            Image: renderA2uiImage,
+            Divider: renderA2uiDivider,
+            AudioPlayer: renderA2uiMediaPlaceholder,
+            Video: renderA2uiMediaPlaceholder,
+            Icon: renderA2uiIcon,
+            Carousel: renderA2uiCarousel,
+            Web: renderA2uiWebFallback,
+            Chart: renderA2uiChart
+        };
+
+        function renderA2uiFrame(frame, surfaceId, surface = getCanvasSurface(surfaceId), parent = a2uiSurfaceHost) {
+            const type = canonicalA2uiType(frame.type);
             const wrap = document.createElement('div');
-            wrap.className = frame.type === 'card' ? 'a2ui-card' : 'a2ui-frame';
+            wrap.className = type === 'Card' ? 'a2ui-card' : 'a2ui-frame';
             wrap.dataset.frameId = frame.id || '';
-            wrap.dataset.type = frame.type || '';
-            const title = frame.title || frame.label;
-            if (title && frame.type !== 'button') {
+            wrap.dataset.type = type;
+            if (frame.visibleBinding && !asBoolean(readDataModelPath(surface, frame.visibleBinding))) {
+                wrap.hidden = true;
+            }
+            const title = resolveBoundText(surface, frame.title || frame.label || '', frame.titleBinding || frame.labelBinding);
+            if (title && type !== 'Button') {
                 const titleEl = document.createElement('div');
                 titleEl.className = 'a2ui-title';
                 titleEl.textContent = title;
                 wrap.appendChild(titleEl);
             }
-            switch (frame.type) {
-                case 'text':
-                case 'markdown':
-                    appendMarkdownOrText(wrap, frame.text || '', frame.type === 'markdown');
-                    break;
-                case 'card':
-                    appendMarkdownOrText(wrap, frame.body || frame.text || '', true);
-                    break;
-                case 'button':
-                    renderA2uiButton(wrap, frame, surfaceId);
-                    break;
-                case 'input':
-                    renderA2uiInput(wrap, frame, surfaceId);
-                    break;
-                case 'select':
-                    renderA2uiSelect(wrap, frame, surfaceId);
-                    break;
-                case 'checklist':
-                    renderA2uiChecklist(wrap, frame, surfaceId);
-                    break;
-                case 'table':
-                    renderA2uiTable(wrap, frame);
-                    break;
-                case 'image':
-                    renderA2uiImage(wrap, frame);
-                    break;
-                case 'progress':
-                    renderA2uiProgress(wrap, frame);
-                    break;
-                case 'chart':
-                    renderA2uiChart(wrap, frame);
-                    break;
-                default:
-                    wrap.textContent = `Unsupported A2UI frame: ${frame.type}`;
-                    canvasDiagnostics.push(`Unsupported A2UI frame: ${frame.type}`);
-                    break;
+            const renderer = A2UI_RENDERERS[type] || renderA2uiFallback;
+            renderer(wrap, frame, surfaceId, surface, type);
+            parent.appendChild(wrap);
+        }
+
+        function canonicalA2uiType(type) {
+            const raw = String(type || 'Text');
+            return A2UI_TYPE_ALIASES[raw] || A2UI_TYPE_ALIASES[raw.toLowerCase()] || raw;
+        }
+
+        function readDataModelPath(surface, path) {
+            if (!path) return undefined;
+            return String(path).split('.').filter(Boolean).reduce((value, segment) => value?.[segment], surface.dataModel);
+        }
+
+        function asBoolean(value) {
+            return value === undefined || value === null ? true : Boolean(value);
+        }
+
+        function boundValue(surface, frame, fallback, bindingName = 'valueBinding') {
+            const bound = readDataModelPath(surface, frame[bindingName]);
+            return bound === undefined ? fallback : bound;
+        }
+
+        function setDataModelPath(surface, path, value) {
+            if (!path) return;
+            if (!surface.dataModel || typeof surface.dataModel !== 'object' || Array.isArray(surface.dataModel)) {
+                surface.dataModel = {};
             }
-            a2uiRoot.appendChild(wrap);
+            const segments = String(path).split('.').filter(Boolean);
+            let current = surface.dataModel;
+            for (let i = 0; i < segments.length - 1; i++) {
+                const segment = segments[i];
+                if (!current[segment] || typeof current[segment] !== 'object' || Array.isArray(current[segment])) {
+                    current[segment] = {};
+                }
+                current = current[segment];
+            }
+            if (segments.length) {
+                current[segments[segments.length - 1]] = value;
+                surface.dataModelJson = JSON.stringify(surface.dataModel);
+            }
+        }
+
+        function setSurfaceValue(surface, frame, value) {
+            if (frame.id) surface.values[frame.id] = value;
+            setDataModelPath(surface, frame.valueBinding, value);
+        }
+
+        function syncedDataModelJson(surface) {
+            if (surface.dataModel && typeof surface.dataModel === 'object' && !Array.isArray(surface.dataModel)) {
+                return JSON.stringify(surface.dataModel);
+            }
+            return JSON.stringify(surface.values || {});
+        }
+
+        function resolveBoundText(surface, value, binding) {
+            const bound = readDataModelPath(surface, binding);
+            if (bound !== undefined) return String(bound ?? '');
+            return String(value ?? '').replace(/\{([A-Za-z0-9_.-]+)\}/g, (_, path) => {
+                const resolved = readDataModelPath(surface, path);
+                return resolved === undefined || resolved === null ? '' : String(resolved);
+            });
         }
 
         function appendMarkdownOrText(parent, value, markdown) {
@@ -1830,30 +2100,46 @@
             parent.appendChild(div);
         }
 
-        function renderA2uiButton(parent, frame, surfaceId) {
+        function renderA2uiText(parent, frame, _surfaceId, surface) {
+            appendMarkdownOrText(parent, resolveBoundText(surface, frame.text ?? frame.value ?? frame.label ?? '', frame.textBinding), false);
+        }
+
+        function renderA2uiMarkdown(parent, frame, _surfaceId, surface) {
+            appendMarkdownOrText(parent, resolveBoundText(surface, frame.markdown ?? frame.text ?? frame.value ?? '', frame.textBinding), true);
+        }
+
+        function renderA2uiCard(parent, frame, surfaceId, surface) {
+            appendMarkdownOrText(parent, resolveBoundText(surface, frame.body || frame.text || '', frame.textBinding), true);
+            renderChildComponents(parent, frame, surfaceId, surface);
+        }
+
+        function renderA2uiButton(parent, frame, surfaceId, surface) {
             const button = document.createElement('button');
             button.className = 'a2ui-button';
             button.type = 'button';
-            button.textContent = frame.label || frame.text || 'Button';
-            button.addEventListener('click', () => sendA2uiEvent(surfaceId, frame.id, 'click', true));
+            button.textContent = resolveBoundText(surface, frame.label || frame.text || 'Button', frame.textBinding);
+            button.disabled = Boolean(readDataModelPath(surface, frame.disabledBinding));
+            button.addEventListener('click', () => sendA2uiInteraction(surface, surfaceId, frame.id, 'click', true));
             parent.appendChild(button);
         }
 
-        function renderA2uiInput(parent, frame, surfaceId) {
+        function renderA2uiInput(parent, frame, surfaceId, surface) {
             const input = document.createElement('input');
             input.className = 'a2ui-control';
             input.placeholder = frame.placeholder || frame.label || '';
-            input.value = frame.value || '';
-            canvasValues[frame.id] = input.value;
+            input.value = String(boundValue(surface, frame, frame.value || '') ?? '');
+            input.disabled = Boolean(readDataModelPath(surface, frame.disabledBinding));
+            setSurfaceValue(surface, frame, input.value);
             input.addEventListener('change', () => {
-                canvasValues[frame.id] = input.value;
-                sendA2uiEvent(surfaceId, frame.id, 'change', input.value);
+                setSurfaceValue(surface, frame, input.value);
+                sendA2uiInteraction(surface, surfaceId, frame.id, 'change', input.value);
             });
             parent.appendChild(input);
         }
 
-        function normalizeOptions(frame) {
-            return Array.isArray(frame.options) ? frame.options.map(option => {
+        function normalizeOptions(frame, surface) {
+            const source = boundValue(surface, frame, frame.options, 'itemsBinding');
+            return Array.isArray(source) ? source.map(option => {
                 if (typeof option === 'string') return { label: option, value: option };
                 return {
                     label: option.label ?? option.text ?? option.value ?? 'option',
@@ -1863,62 +2149,163 @@
             }) : [];
         }
 
-        function renderA2uiSelect(parent, frame, surfaceId) {
+        function renderA2uiSelect(parent, frame, surfaceId, surface) {
             const select = document.createElement('select');
             select.className = 'a2ui-control';
-            for (const option of normalizeOptions(frame)) {
+            const current = boundValue(surface, frame, frame.value);
+            for (const option of normalizeOptions(frame, surface)) {
                 const el = document.createElement('option');
                 el.value = option.value;
                 el.textContent = option.label;
-                el.selected = option.selected;
+                el.selected = current !== undefined ? option.value === current : option.selected;
                 select.appendChild(el);
             }
-            canvasValues[frame.id] = select.value;
+            select.disabled = Boolean(readDataModelPath(surface, frame.disabledBinding));
+            setSurfaceValue(surface, frame, select.value);
             select.addEventListener('change', () => {
-                canvasValues[frame.id] = select.value;
-                sendA2uiEvent(surfaceId, frame.id, 'change', select.value);
+                setSurfaceValue(surface, frame, select.value);
+                sendA2uiInteraction(surface, surfaceId, frame.id, 'change', select.value);
             });
             parent.appendChild(select);
         }
 
-        function renderA2uiChecklist(parent, frame, surfaceId) {
+        function renderA2uiCheckBox(parent, frame, surfaceId, surface) {
+            const options = normalizeOptions(frame, surface);
+            if (!options.length) {
+                const label = document.createElement('label');
+                label.className = 'a2ui-muted';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = Boolean(boundValue(surface, frame, frame.checked ?? frame.value ?? false));
+                checkbox.disabled = Boolean(readDataModelPath(surface, frame.disabledBinding));
+                setSurfaceValue(surface, frame, checkbox.checked);
+                checkbox.addEventListener('change', () => {
+                    setSurfaceValue(surface, frame, checkbox.checked);
+                    sendA2uiInteraction(surface, surfaceId, frame.id, 'change', checkbox.checked);
+                });
+                label.appendChild(checkbox);
+                label.append(` ${frame.label || frame.text || ''}`);
+                parent.appendChild(label);
+                return;
+            }
             const group = document.createElement('div');
-            for (const option of normalizeOptions(frame)) {
+            const disabled = Boolean(readDataModelPath(surface, frame.disabledBinding));
+            const checkboxItems = [];
+            const updateGroupState = () => {
+                const selected = checkboxItems.filter(item => item.checkbox.checked).map(item => item.value);
+                if (frame.id) surface.values[frame.id] = selected;
+                setDataModelPath(surface, frame.valueBinding, selected);
+                return selected;
+            };
+            for (const option of options) {
                 const label = document.createElement('label');
                 label.className = 'a2ui-muted';
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.checked = Boolean(option.selected);
+                checkbox.disabled = disabled;
+                checkboxItems.push({ checkbox, value: option.value });
                 checkbox.addEventListener('change', () => {
-                    canvasValues[`${frame.id}:${option.value}`] = checkbox.checked;
-                    sendA2uiEvent(surfaceId, frame.id, 'change', { value: option.value, selected: checkbox.checked });
+                    const selected = updateGroupState();
+                    sendA2uiInteraction(surface, surfaceId, frame.id, 'change', selected);
                 });
                 label.appendChild(checkbox);
                 label.append(` ${option.label}`);
                 group.appendChild(label);
                 group.appendChild(document.createElement('br'));
             }
+            updateGroupState();
             parent.appendChild(group);
         }
 
-        function renderA2uiTable(parent, frame) {
+        function renderA2uiDateTimeInput(parent, frame, surfaceId, surface) {
+            const input = document.createElement('input');
+            input.className = 'a2ui-control';
+            input.type = frame.inputType || (frame.mode === 'date' ? 'date' : 'datetime-local');
+            input.value = String(boundValue(surface, frame, frame.value || '') ?? '');
+            input.disabled = Boolean(readDataModelPath(surface, frame.disabledBinding));
+            setSurfaceValue(surface, frame, input.value);
+            input.addEventListener('change', () => {
+                setSurfaceValue(surface, frame, input.value);
+                sendA2uiInteraction(surface, surfaceId, frame.id, 'change', input.value);
+            });
+            parent.appendChild(input);
+        }
+
+        function renderA2uiContainer(parent, frame, surfaceId, surface, type) {
+            const container = document.createElement('div');
+            container.style.display = 'flex';
+            container.style.flexDirection = type === 'Row' ? 'row' : 'column';
+            container.style.gap = '0.75rem';
+            renderChildComponents(container, frame, surfaceId, surface);
+            parent.appendChild(container);
+        }
+
+        function renderChildComponents(parent, frame, surfaceId, surface) {
+            const children = frame.components || frame.children || frame.items || [];
+            if (!Array.isArray(children)) return;
+            for (const child of children) {
+                renderA2uiFrame(child, surfaceId, surface, parent);
+            }
+        }
+
+        function renderA2uiList(parent, frame, surfaceId, surface) {
+            const items = boundValue(surface, frame, frame.items || [], 'itemsBinding');
+            const list = document.createElement(frame.ordered ? 'ol' : 'ul');
+            for (const item of Array.isArray(items) ? items : []) {
+                const li = document.createElement('li');
+                if (typeof item === 'object' && item !== null) {
+                    renderA2uiFrame(item, surfaceId, surface, li);
+                } else {
+                    li.textContent = String(item ?? '');
+                }
+                list.appendChild(li);
+            }
+            parent.appendChild(list);
+        }
+
+        function renderA2uiTabs(parent, frame, surfaceId, surface) {
+            const tabs = frame.tabs || frame.items || [];
+            const list = document.createElement('div');
+            list.style.display = 'flex';
+            list.style.gap = '0.5rem';
+            const panel = document.createElement('div');
+            panel.className = 'a2ui-frame';
+            tabs.forEach((tab, index) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'a2ui-tab';
+                button.textContent = tab.title || tab.label || `Tab ${index + 1}`;
+                button.addEventListener('click', () => {
+                    panel.innerHTML = '';
+                    for (const child of tab.components || tab.children || []) renderA2uiFrame(child, surfaceId, surface, panel);
+                });
+                list.appendChild(button);
+            });
+            parent.appendChild(list);
+            parent.appendChild(panel);
+            list.querySelector('button')?.click();
+        }
+
+        function renderA2uiTable(parent, frame, _surfaceId, surface) {
             const table = document.createElement('table');
             table.className = 'a2ui-table';
+            const rows = boundValue(surface, frame, frame.rows || [], 'itemsBinding');
             if (Array.isArray(frame.columns)) {
                 const thead = document.createElement('thead');
                 const tr = document.createElement('tr');
                 for (const column of frame.columns) {
                     const th = document.createElement('th');
-                    th.textContent = String(column);
+                    th.textContent = String(column.label ?? column.key ?? column);
                     tr.appendChild(th);
                 }
                 thead.appendChild(tr);
                 table.appendChild(thead);
             }
             const tbody = document.createElement('tbody');
-            for (const row of Array.isArray(frame.rows) ? frame.rows : []) {
+            for (const row of Array.isArray(rows) ? rows : []) {
                 const tr = document.createElement('tr');
-                const cells = Array.isArray(row) ? row : Object.values(row || {});
+                const cells = Array.isArray(row) ? row : frame.columns?.map(column => row?.[column.key ?? column]) ?? Object.values(row || {});
                 for (const cell of cells) {
                     const td = document.createElement('td');
                     td.textContent = String(cell ?? '');
@@ -1933,23 +2320,41 @@
         function renderA2uiImage(parent, frame) {
             const note = document.createElement('div');
             note.className = 'a2ui-muted';
-            note.textContent = frame.alt || frame.label || 'Image URL omitted by Canvas security policy.';
+            note.textContent = frame.alt || frame.label || frame.url || 'Image URL omitted by Canvas security policy.';
             parent.appendChild(note);
         }
 
-        function renderA2uiProgress(parent, frame) {
+        function renderA2uiDivider(parent) {
+            parent.appendChild(document.createElement('hr'));
+        }
+
+        function renderA2uiProgress(parent, frame, surfaceId, surface) {
             const progress = document.createElement('progress');
             progress.className = 'a2ui-progress';
             progress.max = Number(frame.max ?? 100);
-            const raw = Number(frame.value ?? 0);
+            const raw = Number(boundValue(surface, frame, frame.value ?? 0));
             progress.value = raw <= 1 && progress.max === 100 ? raw * 100 : raw;
             parent.appendChild(progress);
+            if (canonicalA2uiType(frame.type) === 'Slider') {
+                const range = document.createElement('input');
+                range.type = 'range';
+                range.className = 'a2ui-control';
+                range.min = Number(frame.min ?? 0);
+                range.max = Number(frame.max ?? 100);
+                range.value = String(progress.value);
+                range.disabled = Boolean(readDataModelPath(surface, frame.disabledBinding));
+                range.addEventListener('change', () => {
+                    setSurfaceValue(surface, frame, Number(range.value));
+                    sendA2uiInteraction(surface, surfaceId, frame.id, 'change', Number(range.value));
+                });
+                parent.appendChild(range);
+            }
         }
 
-        function renderA2uiChart(parent, frame) {
-            const data = Array.isArray(frame.data) ? frame.data : [];
-            if (!data.length) {
-                appendMarkdownOrText(parent, JSON.stringify(frame.data ?? {}, null, 2), false);
+        function renderA2uiChart(parent, frame, _surfaceId, surface) {
+            const data = boundValue(surface, frame, frame.data || [], 'itemsBinding');
+            if (!Array.isArray(data) || !data.length) {
+                appendMarkdownOrText(parent, JSON.stringify(data ?? {}, null, 2), false);
                 return;
             }
             const max = Math.max(...data.map(item => Number(item.value ?? item.y ?? 0)), 1);
@@ -1965,6 +2370,44 @@
             }
         }
 
+        function renderA2uiIcon(parent, frame) {
+            const span = document.createElement('span');
+            span.className = 'a2ui-muted';
+            span.textContent = frame.label || frame.name || 'Icon';
+            parent.appendChild(span);
+        }
+
+        function renderA2uiCarousel(parent, frame, surfaceId, surface) {
+            renderA2uiList(parent, { ...frame, items: frame.items || frame.slides || [] }, surfaceId, surface);
+        }
+
+        function renderA2uiMediaPlaceholder(parent, frame, _surfaceId, _surface, type) {
+            const note = document.createElement('div');
+            note.className = 'a2ui-muted';
+            note.textContent = `${type} source omitted by Canvas security policy.`;
+            parent.appendChild(note);
+        }
+
+        function renderA2uiWebFallback(parent, frame) {
+            const note = document.createElement('div');
+            note.className = 'a2ui-muted';
+            note.textContent = frame.url ? `Web component blocked: ${frame.url}` : 'Web component blocked by Canvas security policy.';
+            parent.appendChild(note);
+        }
+
+        function renderA2uiFallback(parent, frame, _surfaceId, surface, type) {
+            parent.textContent = `Unsupported A2UI component: ${type}`;
+            surface.diagnostics.push(`Unsupported A2UI component: ${type}`);
+        }
+
+        function sendA2uiInteraction(surface, surfaceId, componentId, eventName, value) {
+            if (surface.protocolVersion === 'v0_9') {
+                sendA2uiAction(surfaceId, componentId, eventName, value, syncedDataModelJson(surface));
+                return;
+            }
+            sendA2uiEvent(surfaceId, componentId, eventName, value);
+        }
+
         function sendA2uiEvent(surfaceId, componentId, eventName, value) {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             ws.send(JSON.stringify({
@@ -1978,28 +2421,50 @@
             }));
         }
 
+        function sendA2uiAction(surfaceId, componentId, action, value, dataModelJson) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({
+                type: 'a2ui_action',
+                operation: 'action',
+                sessionId: canvasSessionId,
+                surfaceId: surfaceId || 'main',
+                componentId,
+                action,
+                valueJson: JSON.stringify(value ?? null),
+                dataModelJson: dataModelJson || null,
+                sequence: ++canvasEventSequence
+            }));
+        }
+
         function sendCanvasSnapshot(env) {
+            const requestedSurfaceId = env.surfaceId || activeCanvasSurfaceId || 'main';
+            const surface = canvasSurfaces.get(requestedSurfaceId) || null;
+            const components = surface?.components || [];
             const snapshot = {
                 type: 'canvas_snapshot',
-                surfaceId: env.surfaceId || 'main',
+                surfaceId: surface?.surfaceId || requestedSurfaceId,
+                catalogId: surface?.catalogId || null,
+                title: surface?.title || null,
                 visible: !canvasPanel.hidden,
-                frameCount: canvasFrames.length,
-                frames: canvasFrames.map(frame => ({
+                frameCount: components.length,
+                components,
+                frames: components.map(frame => ({
                     id: frame.id,
                     type: frame.type,
                     title: frame.title,
                     label: frame.label,
                     text: frame.text
                 })),
-                values: canvasValues,
-                diagnostics: canvasDiagnostics,
+                dataModelJson: surface?.dataModelJson || null,
+                values: surface?.values || {},
+                diagnostics: surface?.diagnostics || [],
                 localHtmlText: canvasHtmlFrame.hidden ? null : canvasHtmlFrame.srcdoc
             };
             ws.send(JSON.stringify({
                 type: 'canvas_snapshot_result',
                 requestId: env.requestId,
                 sessionId: canvasSessionId,
-                surfaceId: env.surfaceId || 'main',
+                surfaceId: snapshot.surfaceId,
                 snapshotMode: env.snapshotMode || 'state',
                 success: true,
                 snapshotJson: JSON.stringify(snapshot)

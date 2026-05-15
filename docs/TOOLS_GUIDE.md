@@ -88,15 +88,19 @@ Gateway-registered first-party payment tool over the native payment runtime. Dis
 - Safety: money-moving actions are approval-gated by policy; tool results include safe metadata only.
 - Docs: [plugins/payment.md](plugins/payment.md) and [security/payments.md](security/payments.md).
 
-### 7b. Canvas and A2UI Tools (`canvas_present`, `canvas_hide`, `canvas_navigate`, `canvas_snapshot`, `a2ui_push`, `a2ui_reset`, `a2ui_eval`)
+### 7b. Canvas and A2UI Tools (`canvas_present`, `canvas_hide`, `canvas_navigate`, `canvas_snapshot`, `a2ui_push`, `a2ui_reset`, `a2ui_eval`, `a2ui_create_surface`, `a2ui_update_components`, `a2ui_update_data_model`, `a2ui_delete_surface`, `a2ui_sync_ui_to_data`)
+
 Control the current websocket session's Canvas visual workspace.
 - **Config**: `OpenClaw:Canvas:*`
 - **Scope**: websocket sessions only; commands are routed to the active client sender for the current session.
-- **A2UI**: `a2ui_push` accepts A2UI v0.8 JSONL frames for text, markdown, card, button, input, select, checklist, table, image, progress, and simple chart components.
+- **A2UI v0.8**: `a2ui_push` accepts JSONL frames for text, markdown, card, button, input, select, checklist, table, image, progress, and simple chart components.
+- **A2UI v0.9**: structured surface tools create, update, sync, and delete independent `surfaceId` contexts with component arrays and data models.
+- **Catalogs**: v0.9 tools use client-advertised `supportedCatalogIds`; the broker validates requested catalogs and locks the selected catalog for each surface lifecycle.
 - **Navigation**: `canvas_navigate` supports inline local HTML and `about:blank`; remote `http:` / `https:` Canvas navigation is rejected. Use the `browser` tool for remote webpages.
-- **Eval**: `a2ui_eval` is capability-gated. First-party v1 clients do not advertise `a2ui.eval`, so browser-side script execution remains disabled by default.
-- **Snapshots**: `canvas_snapshot` returns lightweight JSON state, not a remote browser screenshot.
+- **Eval**: `a2ui_eval` is capability-gated. First-party clients do not advertise `a2ui.eval`, so browser-side script execution remains disabled by default.
+- **Snapshots**: `canvas_snapshot` returns lightweight JSON state for the requested surface, not a remote browser screenshot.
 - **Safety**: non-loopback deployments must explicitly opt in with `OpenClaw:Canvas:AllowOnPublicBind=true`.
+- **Details**: see [CANVAS_A2UI.md](CANVAS_A2UI.md).
 
 ---
 

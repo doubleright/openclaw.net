@@ -53,13 +53,14 @@ public sealed partial class A2UiFrameItem : ObservableObject
     public bool HasDisplayText => !string.IsNullOrWhiteSpace(DisplayText);
     public bool HasOptions => Options.Count > 0;
     public bool HasTable => Columns.Count > 0 || Rows.Count > 0;
-    public bool IsButton => TypeEquals("button");
-    public bool IsInput => TypeEquals("input");
-    public bool IsSelect => TypeEquals("select");
-    public bool IsChecklist => TypeEquals("checklist");
-    public bool IsProgress => TypeEquals("progress");
-    public bool IsImage => TypeEquals("image");
-    public bool IsChart => TypeEquals("chart");
+    public bool IsButton => TypeEquals("button") || TypeEquals("Button");
+    public bool IsInput => TypeEquals("input") || TypeEquals("TextField");
+    public bool IsSelect => TypeEquals("select") || TypeEquals("ChoicePicker");
+    public bool IsChecklist => TypeEquals("checklist") || TypeEquals("CheckBox");
+    public bool IsProgress => TypeEquals("progress") || TypeEquals("Slider");
+    public bool IsImage => TypeEquals("image") || TypeEquals("Image");
+    public bool IsChart => TypeEquals("chart") || TypeEquals("Chart");
+    public bool IsUnsupportedFallback => !IsButton && !IsInput && !IsSelect && !IsChecklist && !IsProgress && !IsImage && !IsChart && !HasText && !HasBody && !HasTable && !HasDisplayText;
 
     public static A2UiFrameItem FromJson(string surfaceId, JsonElement root, Func<A2UiFrameItem, string, string, Task> onEvent)
     {

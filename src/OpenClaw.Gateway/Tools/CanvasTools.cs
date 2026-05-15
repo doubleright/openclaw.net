@@ -77,6 +77,106 @@ internal abstract class CanvasToolBase : IToolWithContext
         return false;
     }
 
+    protected static bool TryGetOptionalStringArray(JsonElement root, string propertyName, out string[]? values, out string error)
+    {
+        values = null;
+        error = "";
+        if (!root.TryGetProperty(propertyName, out var prop) || prop.ValueKind == JsonValueKind.Null)
+            return true;
+
+        if (prop.ValueKind != JsonValueKind.Array)
+        {
+            error = $"Error: '{propertyName}' must be a JSON string array.";
+            return false;
+        }
+
+        var items = new List<string>();
+        foreach (var item in prop.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                error = $"Error: '{propertyName}' must be a JSON string array.";
+                return false;
+            }
+
+            items.Add(item.GetString() ?? "");
+        }
+
+        values = items.ToArray();
+        return true;
+    }
+
+    protected static bool TryGetRequiredStringArray(JsonElement root, string propertyName, out string[] values, out string error)
+    {
+        values = [];
+        if (!TryGetOptionalStringArray(root, propertyName, out var found, out error))
+            return false;
+
+        if (found is { Length: > 0 })
+        {
+            values = found;
+            return true;
+        }
+
+        error = $"Error: '{propertyName}' is required as a non-empty JSON string array.";
+        return false;
+    }
+
+    protected static string? ValidateOptionalJsonObject(string? json, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                ? null
+                : $"Error: '{propertyName}' must be a JSON object.";
+        }
+        catch (JsonException ex)
+        {
+            return $"Error: '{propertyName}' is not valid JSON: {ex.Message}";
+        }
+    }
+
+    protected string? ValidateEnvelopePayloadSize(WsServerEnvelope envelope)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, CoreJsonContext.Default.WsServerEnvelope);
+        var maxBytes = MaxPayloadBytesWithEnvelopeReserve();
+        return bytes.Length <= maxBytes
+            ? null
+            : $"Error: payload exceeds {maxBytes} bytes.";
+    }
+
+    protected static string? ValidateA2UiV09Envelope(WsServerEnvelope envelope)
+    {
+        var validation = A2UiV09MessageValidator.Validate(envelope);
+        return validation.IsValid ? null : $"Error: {validation.Error}";
+    }
+
+    protected bool TryResolveCatalog(string senderId, string? requestedCatalogId, out A2UiCatalogDescriptor catalog, out string error)
+    {
+        if (Broker.TryChooseCatalog(senderId, requestedCatalogId, out var chosen, out var brokerError) && chosen is not null)
+        {
+            catalog = chosen;
+            error = "";
+            return true;
+        }
+
+        catalog = null!;
+        error = $"Error: {brokerError ?? "Canvas client does not support the requested catalog."}";
+        return false;
+    }
+
+    protected bool TryGetLockedOrResolveCatalog(ToolExecutionContext context, string surfaceId, out A2UiCatalogDescriptor catalog, out string error)
+    {
+        var requestedCatalogId = Broker.TryGetSurfaceCatalogId(context.Session.SenderId, context.Session.Id, surfaceId, out var lockedCatalogId)
+            ? lockedCatalogId
+            : null;
+        return TryResolveCatalog(context.Session.SenderId, requestedCatalogId, out catalog, out error);
+    }
+
     protected int MaxPayloadBytesWithEnvelopeReserve()
         => Math.Max(1, Config.Canvas.MaxCommandBytes - 4096);
 }
@@ -247,5 +347,163 @@ internal sealed class A2UiEvalTool : CanvasToolBase
             SurfaceId = SurfaceId(args.RootElement),
             Script = script
         }, "canvas_eval_result", "a2ui.eval", ct);
+    }
+}
+
+internal sealed class A2UiCreateSurfaceTool : CanvasToolBase
+{
+    public A2UiCreateSurfaceTool(CanvasCommandBroker broker, GatewayConfig config) : base(broker, config) { }
+    public override string Name => "a2ui_create_surface";
+    public override string Description => "Create an A2UI v0.9 surface in the current session Canvas.";
+    public override string ParameterSchema => """
+        {"type":"object","properties":{"surfaceId":{"type":"string"},"catalogId":{"type":"string"},"title":{"type":"string"},"metadata":{"type":"string","description":"JSON object metadata"},"components":{"type":"array","items":{"type":"string"}},"dataModelJson":{"type":"string"}},"required":["surfaceId"]}
+        """;
+
+    public override async ValueTask<string> ExecuteAsync(string argumentsJson, ToolExecutionContext context, CancellationToken ct)
+    {
+        using var args = ParseArgs(argumentsJson);
+        var root = args.RootElement;
+        if (!TryGetRequiredString(root, "surfaceId", out var surfaceId, out var error)) return error;
+        var catalogId = TryGetString(root, "catalogId");
+        var title = TryGetString(root, "title");
+        var metadata = TryGetString(root, "metadata");
+        if ((error = ValidateOptionalJsonObject(metadata, "metadata")) is not null) return error;
+        if (!TryGetOptionalStringArray(root, "components", out var components, out error)) return error;
+        var dataModelJson = TryGetString(root, "dataModelJson");
+
+        if (!TryResolveCatalog(context.Session.SenderId, catalogId, out var catalog, out error)) return error;
+
+        var envelope = new WsServerEnvelope
+        {
+            Type = "a2ui_create_surface",
+            Operation = "createSurface",
+            SurfaceId = surfaceId,
+            CatalogId = catalog.CatalogId,
+            SurfaceTitle = title,
+            ParametersJson = metadata,
+            Components = components,
+            DataModelJson = dataModelJson
+        };
+
+        if ((error = ValidateA2UiV09Envelope(envelope)) is not null) return error;
+        if ((error = ValidateEnvelopePayloadSize(envelope)) is not null) return error;
+        return await SendAsync(argumentsJson, context, envelope, "canvas_ack", "a2ui.v0_9", ct);
+    }
+}
+
+internal sealed class A2UiUpdateComponentsTool : CanvasToolBase
+{
+    public A2UiUpdateComponentsTool(CanvasCommandBroker broker, GatewayConfig config) : base(broker, config) { }
+    public override string Name => "a2ui_update_components";
+    public override string Description => "Update A2UI v0.9 surface components using a JSON string array.";
+    public override string ParameterSchema => """
+        {"type":"object","properties":{"surfaceId":{"type":"string"},"components":{"type":"array","items":{"type":"string"}}},"required":["surfaceId","components"]}
+        """;
+
+    public override async ValueTask<string> ExecuteAsync(string argumentsJson, ToolExecutionContext context, CancellationToken ct)
+    {
+        using var args = ParseArgs(argumentsJson);
+        if (!TryGetRequiredString(args.RootElement, "surfaceId", out var surfaceId, out var error)) return error;
+        if (!TryGetRequiredStringArray(args.RootElement, "components", out var components, out error)) return error;
+
+        if (!TryGetLockedOrResolveCatalog(context, surfaceId, out var catalog, out error)) return error;
+
+        var envelope = new WsServerEnvelope
+        {
+            Type = "a2ui_update_components",
+            Operation = "updateComponents",
+            SurfaceId = surfaceId,
+            CatalogId = catalog.CatalogId,
+            Components = components
+        };
+
+        if ((error = ValidateA2UiV09Envelope(envelope)) is not null) return error;
+        if ((error = ValidateEnvelopePayloadSize(envelope)) is not null) return error;
+        return await SendAsync(argumentsJson, context, envelope, "canvas_ack", "a2ui.v0_9", ct);
+    }
+}
+
+internal sealed class A2UiUpdateDataModelTool : CanvasToolBase
+{
+    public A2UiUpdateDataModelTool(CanvasCommandBroker broker, GatewayConfig config) : base(broker, config) { }
+    public override string Name => "a2ui_update_data_model";
+    public override string Description => "Update an A2UI v0.9 surface data model.";
+    public override string ParameterSchema => """
+        {"type":"object","properties":{"surfaceId":{"type":"string"},"dataModelJson":{"type":"string"}},"required":["surfaceId","dataModelJson"]}
+        """;
+
+    public override async ValueTask<string> ExecuteAsync(string argumentsJson, ToolExecutionContext context, CancellationToken ct)
+    {
+        using var args = ParseArgs(argumentsJson);
+        if (!TryGetRequiredString(args.RootElement, "surfaceId", out var surfaceId, out var error)) return error;
+        if (!TryGetRequiredString(args.RootElement, "dataModelJson", out var dataModelJson, out error)) return error;
+
+        if (!TryGetLockedOrResolveCatalog(context, surfaceId, out var catalog, out error)) return error;
+
+        var envelope = new WsServerEnvelope
+        {
+            Type = "a2ui_update_data_model",
+            Operation = "updateDataModel",
+            SurfaceId = surfaceId,
+            CatalogId = catalog.CatalogId,
+            DataModelJson = dataModelJson
+        };
+
+        if ((error = ValidateA2UiV09Envelope(envelope)) is not null) return error;
+        if ((error = ValidateEnvelopePayloadSize(envelope)) is not null) return error;
+        return await SendAsync(argumentsJson, context, envelope, "canvas_ack", "a2ui.v0_9", ct);
+    }
+}
+
+internal sealed class A2UiDeleteSurfaceTool : CanvasToolBase
+{
+    public A2UiDeleteSurfaceTool(CanvasCommandBroker broker, GatewayConfig config) : base(broker, config) { }
+    public override string Name => "a2ui_delete_surface";
+    public override string Description => "Delete an A2UI v0.9 surface.";
+    public override string ParameterSchema => """{"type":"object","properties":{"surfaceId":{"type":"string"}},"required":["surfaceId"]}""";
+
+    public override async ValueTask<string> ExecuteAsync(string argumentsJson, ToolExecutionContext context, CancellationToken ct)
+    {
+        using var args = ParseArgs(argumentsJson);
+        if (!TryGetRequiredString(args.RootElement, "surfaceId", out var surfaceId, out var error)) return error;
+        var envelope = new WsServerEnvelope
+        {
+            Type = "a2ui_delete_surface",
+            Operation = "deleteSurface",
+            SurfaceId = surfaceId
+        };
+
+        if ((error = ValidateA2UiV09Envelope(envelope)) is not null) return error;
+        if ((error = ValidateEnvelopePayloadSize(envelope)) is not null) return error;
+        return await SendAsync(argumentsJson, context, envelope, "canvas_ack", "a2ui.v0_9", ct);
+    }
+}
+
+internal sealed class A2UiSyncUiToDataTool : CanvasToolBase
+{
+    public A2UiSyncUiToDataTool(CanvasCommandBroker broker, GatewayConfig config) : base(broker, config) { }
+    public override string Name => "a2ui_sync_ui_to_data";
+    public override string Description => "Synchronize A2UI v0.9 UI state into a data model.";
+    public override string ParameterSchema => """
+        {"type":"object","properties":{"surfaceId":{"type":"string"},"componentId":{"type":"string"},"syncMode":{"type":"string"}},"required":["surfaceId"]}
+        """;
+
+    public override async ValueTask<string> ExecuteAsync(string argumentsJson, ToolExecutionContext context, CancellationToken ct)
+    {
+        using var args = ParseArgs(argumentsJson);
+        var root = args.RootElement;
+        if (!TryGetRequiredString(root, "surfaceId", out var surfaceId, out var error)) return error;
+        var envelope = new WsServerEnvelope
+        {
+            Type = "a2ui_sync_ui_to_data",
+            Operation = "syncUIToData",
+            SurfaceId = surfaceId,
+            ComponentId = TryGetString(root, "componentId"),
+            SyncMode = TryGetString(root, "syncMode")
+        };
+
+        if ((error = ValidateA2UiV09Envelope(envelope)) is not null) return error;
+        if ((error = ValidateEnvelopePayloadSize(envelope)) is not null) return error;
+        return await SendAsync(argumentsJson, context, envelope, "a2ui_sync_result", "a2ui.v0_9", ct);
     }
 }

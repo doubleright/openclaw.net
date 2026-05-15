@@ -8,6 +8,19 @@ public sealed record WsClientEnvelope
 {
     public required string Type { get; init; }
     public string? RequestId { get; init; }
+    public string? ProtocolVersion { get; init; }
+    public string? Operation { get; init; }
+    public string? CatalogId { get; init; }
+    public string[]? SupportedCatalogIds { get; init; }
+    public string[]? Components { get; init; }
+    public string? DataModelJson { get; init; }
+    public string? SurfaceTitle { get; init; }
+    public string? SurfaceKind { get; init; }
+    public string? ParentSurfaceId { get; init; }
+    public string? Action { get; init; }
+    public string? ParametersJson { get; init; }
+    public string? SyncMode { get; init; }
+    public string? DiagnosticCode { get; init; }
     public string? Text { get; init; }
     public string? Content { get; init; }
     public string? SessionId { get; init; }
@@ -41,6 +54,19 @@ public sealed record WsServerEnvelope
 {
     public required string Type { get; init; }
     public string? RequestId { get; init; }
+    public string? ProtocolVersion { get; init; }
+    public string? Operation { get; init; }
+    public string? CatalogId { get; init; }
+    public string[]? SupportedCatalogIds { get; init; }
+    public string[]? Components { get; init; }
+    public string? DataModelJson { get; init; }
+    public string? SurfaceTitle { get; init; }
+    public string? SurfaceKind { get; init; }
+    public string? ParentSurfaceId { get; init; }
+    public string? Action { get; init; }
+    public string? ParametersJson { get; init; }
+    public string? SyncMode { get; init; }
+    public string? DiagnosticCode { get; init; }
     public string? Text { get; init; }
     public string? InReplyToMessageId { get; init; }
     public string? SessionId { get; init; }

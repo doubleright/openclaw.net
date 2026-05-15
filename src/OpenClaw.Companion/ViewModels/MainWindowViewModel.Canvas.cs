@@ -26,13 +26,30 @@ public sealed partial class MainWindowViewModel
     [ObservableProperty]
     private string _canvasHtmlStatus = "";
 
+    public ObservableCollection<A2UiSurfaceItem> CanvasSurfaces { get; } = new();
+
+    [ObservableProperty]
+    private A2UiSurfaceItem? _activeCanvasSurface;
+
     public ObservableCollection<A2UiFrameItem> CanvasFrames { get; } = new();
 
     public bool HasCanvasFrames => CanvasFrames.Count > 0;
+    public bool HasCanvasSurfaces => CanvasSurfaces.Count > 0;
+    public bool HasActiveCanvasSurfaceDiagnostics => ActiveCanvasSurface?.Diagnostics.Count > 0;
     public bool HasCanvasHtmlStatus => !string.IsNullOrWhiteSpace(CanvasHtmlStatus);
 
     partial void OnCanvasHtmlStatusChanged(string value)
         => OnPropertyChanged(nameof(HasCanvasHtmlStatus));
+
+    partial void OnActiveCanvasSurfaceChanged(A2UiSurfaceItem? oldValue, A2UiSurfaceItem? newValue)
+    {
+        if (oldValue is not null)
+            oldValue.IsActive = false;
+        if (newValue is not null)
+            newValue.IsActive = true;
+        SyncCompatibilityCanvasFrames();
+        OnPropertyChanged(nameof(HasActiveCanvasSurfaceDiagnostics));
+    }
 
     private async Task SendCanvasReadyAsync()
     {
@@ -47,7 +64,13 @@ public sealed partial class MainWindowViewModel
                 "a2ui.v0_8",
                 "canvas.present",
                 "canvas.hide",
-                "snapshot.state"
+                "snapshot.state",
+                "a2ui.v0_9"
+            ],
+            SupportedCatalogIds =
+            [
+                A2UiCatalogRegistry.OpenClawV08CatalogId,
+                A2UiCatalogRegistry.AGenUiCatalogId
             ]
         }, CancellationToken.None);
     }
@@ -86,14 +109,37 @@ public sealed partial class MainWindowViewModel
                     return;
 
                 case "a2ui_reset":
+                    CanvasSurfaces.Clear();
+                    ActiveCanvasSurface = null;
                     CanvasFrames.Clear();
                     OnPropertyChanged(nameof(HasCanvasFrames));
+                    OnPropertyChanged(nameof(HasCanvasSurfaces));
                     CanvasStatus = "Canvas reset.";
                     await SendCanvasAckAsync(envelope, success: true, error: null);
                     return;
 
                 case "a2ui_push":
-                    await ApplyA2UiPushAsync(envelope, surfaceId);
+                    await ApplyA2UiPushAsync(envelope, "main");
+                    return;
+
+                case "a2ui_create_surface":
+                    await ApplyA2UiCreateSurfaceAsync(envelope, surfaceId);
+                    return;
+
+                case "a2ui_update_components":
+                    await ApplyA2UiUpdateComponentsAsync(envelope, surfaceId);
+                    return;
+
+                case "a2ui_update_data_model":
+                    await ApplyA2UiUpdateDataModelAsync(envelope, surfaceId);
+                    return;
+
+                case "a2ui_delete_surface":
+                    await ApplyA2UiDeleteSurfaceAsync(envelope, surfaceId);
+                    return;
+
+                case "a2ui_sync_ui_to_data":
+                    await SendA2UiSyncResultAsync(envelope);
                     return;
 
                 case "canvas_snapshot":
@@ -115,10 +161,13 @@ public sealed partial class MainWindowViewModel
     {
         if (string.Equals(envelope.Url, "about:blank", StringComparison.OrdinalIgnoreCase))
         {
+            CanvasSurfaces.Clear();
+            ActiveCanvasSurface = null;
             CanvasFrames.Clear();
             CanvasHtmlStatus = "";
             CanvasStatus = "Canvas navigated to blank.";
             OnPropertyChanged(nameof(HasCanvasFrames));
+            OnPropertyChanged(nameof(HasCanvasSurfaces));
             await SendCanvasAckAsync(envelope, success: true, error: null);
             return;
         }
@@ -140,19 +189,152 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        var surface = GetOrCreateSurface(surfaceId, A2UiCatalogRegistry.OpenClawV08CatalogId, "Main");
         foreach (var line in envelope.Frames!.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
         {
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
             using var doc = JsonDocument.Parse(line);
-            CanvasFrames.Add(A2UiFrameItem.FromJson(surfaceId, doc.RootElement, SendA2UiEventAsync));
+            surface.Components.Add(A2UiFrameItem.FromJson(surfaceId, doc.RootElement, SendA2UiEventAsync));
         }
 
+        ActiveCanvasSurface = surface;
         IsCanvasVisible = true;
         CanvasStatus = $"Rendered {validation.FrameCount} A2UI frame(s).";
-        OnPropertyChanged(nameof(HasCanvasFrames));
+        NotifySurfaceStateChanged();
         await SendCanvasAckAsync(envelope, success: true, error: null);
+    }
+
+    private async Task ApplyA2UiCreateSurfaceAsync(WsServerEnvelope envelope, string surfaceId)
+    {
+        var components = BuildV09Components(surfaceId, envelope.Components, out var diagnostics);
+        var surface = GetOrCreateSurface(surfaceId, envelope.CatalogId, envelope.SurfaceTitle);
+        surface.CatalogId = string.IsNullOrWhiteSpace(envelope.CatalogId) ? A2UiCatalogRegistry.AGenUiCatalogId : envelope.CatalogId!;
+        surface.Title = string.IsNullOrWhiteSpace(envelope.SurfaceTitle) ? surfaceId : envelope.SurfaceTitle!;
+        surface.DataModelJson = envelope.DataModelJson;
+        surface.Components.Clear();
+        surface.Diagnostics.Clear();
+        foreach (var item in components)
+            surface.Components.Add(item);
+        foreach (var diagnostic in diagnostics)
+            surface.Diagnostics.Add(diagnostic);
+        ActiveCanvasSurface = surface;
+        IsCanvasVisible = true;
+        CanvasStatus = $"Created A2UI surface '{surface.Title}'.";
+        NotifySurfaceStateChanged();
+        await SendCanvasAckAsync(envelope, success: true, error: null);
+    }
+
+    private async Task ApplyA2UiUpdateComponentsAsync(WsServerEnvelope envelope, string surfaceId)
+    {
+        var components = BuildV09Components(surfaceId, envelope.Components, out var diagnostics);
+        var surface = GetOrCreateSurface(surfaceId, envelope.CatalogId, envelope.SurfaceTitle);
+        surface.Components.Clear();
+        surface.Diagnostics.Clear();
+        foreach (var item in components)
+            surface.Components.Add(item);
+        foreach (var diagnostic in diagnostics)
+            surface.Diagnostics.Add(diagnostic);
+        ActiveCanvasSurface = surface;
+        IsCanvasVisible = true;
+        CanvasStatus = $"Updated A2UI surface '{surface.Title}'.";
+        NotifySurfaceStateChanged();
+        await SendCanvasAckAsync(envelope, success: true, error: null);
+    }
+
+    private async Task ApplyA2UiUpdateDataModelAsync(WsServerEnvelope envelope, string surfaceId)
+    {
+        var surface = GetOrCreateSurface(surfaceId, envelope.CatalogId, envelope.SurfaceTitle);
+        surface.DataModelJson = envelope.DataModelJson;
+        ActiveCanvasSurface = surface;
+        IsCanvasVisible = true;
+        CanvasStatus = $"Updated A2UI data model for '{surface.Title}'.";
+        NotifySurfaceStateChanged();
+        await SendCanvasAckAsync(envelope, success: true, error: null);
+    }
+
+    private async Task ApplyA2UiDeleteSurfaceAsync(WsServerEnvelope envelope, string surfaceId)
+    {
+        var surface = CanvasSurfaces.FirstOrDefault(s => string.Equals(s.SurfaceId, surfaceId, StringComparison.OrdinalIgnoreCase));
+        if (surface is not null)
+            CanvasSurfaces.Remove(surface);
+
+        if (ReferenceEquals(ActiveCanvasSurface, surface))
+            ActiveCanvasSurface = CanvasSurfaces.FirstOrDefault();
+        else
+            SyncCompatibilityCanvasFrames();
+
+        IsCanvasVisible = CanvasSurfaces.Count > 0;
+        CanvasStatus = $"Deleted A2UI surface '{surfaceId}'.";
+        NotifySurfaceStateChanged();
+        await SendCanvasAckAsync(envelope, success: true, error: null);
+    }
+
+    private A2UiSurfaceItem GetOrCreateSurface(string surfaceId, string? catalogId, string? title)
+    {
+        var surface = CanvasSurfaces.FirstOrDefault(s => string.Equals(s.SurfaceId, surfaceId, StringComparison.OrdinalIgnoreCase));
+        if (surface is not null)
+            return surface;
+
+        surface = new A2UiSurfaceItem(
+            surfaceId,
+            string.IsNullOrWhiteSpace(catalogId) ? A2UiCatalogRegistry.AGenUiCatalogId : catalogId!,
+            string.IsNullOrWhiteSpace(title) ? surfaceId : title!);
+        CanvasSurfaces.Add(surface);
+        OnPropertyChanged(nameof(HasCanvasSurfaces));
+        return surface;
+    }
+
+    private void AddV09Components(A2UiSurfaceItem surface, string[]? components)
+    {
+        if (components is null)
+            return;
+
+        var items = BuildV09Components(surface.SurfaceId, components, out var diagnostics);
+        foreach (var item in items)
+            surface.Components.Add(item);
+        foreach (var diagnostic in diagnostics)
+            surface.Diagnostics.Add(diagnostic);
+    }
+
+    private IReadOnlyList<A2UiFrameItem> BuildV09Components(string surfaceId, string[]? components, out IReadOnlyList<string> diagnostics)
+    {
+        var items = new List<A2UiFrameItem>();
+        var diagnosticItems = new List<string>();
+        if (components is not null)
+        {
+            foreach (var componentJson in components)
+            {
+                using var doc = JsonDocument.Parse(componentJson);
+                var item = A2UiFrameItem.FromJson(surfaceId, doc.RootElement, SendA2UiActionAsync);
+                if (item.IsUnsupportedFallback)
+                    diagnosticItems.Add($"Unsupported AGenUI component '{item.Type}' rendered as fallback.");
+                items.Add(item);
+            }
+        }
+
+        diagnostics = diagnosticItems;
+        return items;
+    }
+
+    private void SyncCompatibilityCanvasFrames()
+    {
+        CanvasFrames.Clear();
+        if (ActiveCanvasSurface is not null)
+        {
+            foreach (var component in ActiveCanvasSurface.Components)
+                CanvasFrames.Add(component);
+        }
+        OnPropertyChanged(nameof(HasCanvasFrames));
+    }
+
+    private void NotifySurfaceStateChanged()
+    {
+        SyncCompatibilityCanvasFrames();
+        OnPropertyChanged(nameof(HasCanvasFrames));
+        OnPropertyChanged(nameof(HasCanvasSurfaces));
+        OnPropertyChanged(nameof(HasActiveCanvasSurfaceDiagnostics));
     }
 
     private async Task SendCanvasAckAsync(WsServerEnvelope envelope, bool success, string? error)
@@ -179,6 +361,22 @@ public sealed partial class MainWindowViewModel
             Success = success,
             ValueJson = valueJson,
             Error = error
+        }, CancellationToken.None);
+    }
+
+    private async Task SendA2UiSyncResultAsync(WsServerEnvelope envelope)
+    {
+        var dataModelJson = BuildA2UiSyncDataModelJson(envelope.SurfaceId);
+        await _client.SendEnvelopeAsync(new WsClientEnvelope
+        {
+            Type = "a2ui_sync_result",
+            RequestId = envelope.RequestId,
+            SessionId = _canvasSessionId,
+            SurfaceId = envelope.SurfaceId,
+            ComponentId = envelope.ComponentId,
+            SyncMode = envelope.SyncMode,
+            Success = true,
+            ValueJson = dataModelJson
         }, CancellationToken.None);
     }
 
@@ -214,10 +412,43 @@ public sealed partial class MainWindowViewModel
         }, CancellationToken.None);
     }
 
+    private async Task SendA2UiActionAsync(A2UiFrameItem frame, string actionName, string parametersJson)
+    {
+        if (!_client.IsConnected)
+            return;
+
+        await _client.SendEnvelopeAsync(new WsClientEnvelope
+        {
+            Type = "a2ui_action",
+            Operation = "action",
+            SessionId = _canvasSessionId,
+            SurfaceId = frame.SurfaceId,
+            ComponentId = frame.Id,
+            Action = actionName,
+            ValueJson = parametersJson,
+            Sequence = Interlocked.Increment(ref _canvasEventSequence)
+        }, CancellationToken.None);
+    }
+
+    private string BuildA2UiSyncDataModelJson(string? surfaceId)
+    {
+        var surface = FindCanvasSurface(surfaceId);
+        if (IsJsonObject(surface?.DataModelJson))
+            return surface!.DataModelJson!;
+
+        var values = (surface?.Components ?? CanvasFrames)
+            .Where(static frame => !string.IsNullOrWhiteSpace(frame.ValueText) || !string.IsNullOrWhiteSpace(frame.SelectedValue))
+            .ToDictionary(static frame => frame.Id, static frame => (object?)(frame.SelectedValue ?? frame.ValueText));
+        return JsonSerializer.Serialize(values);
+    }
+
     private string BuildCanvasSnapshotJson(string? surfaceId)
     {
-        var totalFrames = CanvasFrames.Count;
-        var frames = CanvasFrames.Take(MaxSnapshotFrames).Select(frame => new
+        var resolvedSurfaceId = ResolveSurfaceId(surfaceId);
+        var surface = FindCanvasSurface(resolvedSurfaceId);
+        var sourceFrames = surface?.Components ?? CanvasFrames;
+        var totalFrames = sourceFrames.Count;
+        var frames = sourceFrames.Take(MaxSnapshotFrames).Select(frame => new
         {
             frame.SurfaceId,
             frame.Id,
@@ -229,16 +460,24 @@ public sealed partial class MainWindowViewModel
             SelectedValue = TruncateSnapshotText(frame.SelectedValue)
         }).ToArray();
 
+        var diagnostics = new List<string>();
+        if (!string.IsNullOrWhiteSpace(CanvasHtmlStatus))
+            diagnostics.Add(CanvasHtmlStatus);
+        if (surface is not null)
+            diagnostics.AddRange(surface.Diagnostics);
+
+        var dataModel = ParseJsonObjectOrNull(surface?.DataModelJson, diagnostics);
         var snapshot = JsonSerializer.Serialize(new
         {
             type = "canvas_snapshot",
-            surfaceId = string.IsNullOrWhiteSpace(surfaceId) ? "main" : surfaceId,
+            surfaceId = resolvedSurfaceId,
             visible = IsCanvasVisible,
             frameCount = totalFrames,
             returnedFrameCount = frames.Length,
             truncated = totalFrames > frames.Length,
+            dataModel,
             frames,
-            diagnostics = string.IsNullOrWhiteSpace(CanvasHtmlStatus) ? Array.Empty<string>() : new[] { CanvasHtmlStatus }
+            diagnostics = diagnostics.ToArray()
         });
 
         if (snapshot.Length <= MaxSnapshotJsonChars)
@@ -247,7 +486,7 @@ public sealed partial class MainWindowViewModel
         return JsonSerializer.Serialize(new
         {
             type = "canvas_snapshot",
-            surfaceId = string.IsNullOrWhiteSpace(surfaceId) ? "main" : surfaceId,
+            surfaceId = resolvedSurfaceId,
             visible = IsCanvasVisible,
             frameCount = totalFrames,
             returnedFrameCount = 0,
@@ -255,6 +494,48 @@ public sealed partial class MainWindowViewModel
             frames = Array.Empty<object>(),
             diagnostics = new[] { $"Snapshot exceeded {MaxSnapshotJsonChars} characters and was truncated." }
         });
+    }
+
+    private A2UiSurfaceItem? FindCanvasSurface(string? surfaceId)
+    {
+        var resolvedSurfaceId = ResolveSurfaceId(surfaceId);
+        return CanvasSurfaces.FirstOrDefault(s => string.Equals(s.SurfaceId, resolvedSurfaceId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string ResolveSurfaceId(string? surfaceId)
+        => string.IsNullOrWhiteSpace(surfaceId) ? ActiveCanvasSurface?.SurfaceId ?? "main" : surfaceId!;
+
+    private static JsonElement? ParseJsonObjectOrNull(string? json, ICollection<string> diagnostics)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            diagnostics.Add("Surface dataModelJson is not valid JSON and was omitted from the snapshot.");
+            return null;
+        }
+    }
+
+    private static bool IsJsonObject(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static string? TruncateSnapshotText(string? value)
@@ -265,12 +546,15 @@ public sealed partial class MainWindowViewModel
     [RelayCommand]
     private void ClearCanvas()
     {
+        CanvasSurfaces.Clear();
+        ActiveCanvasSurface = null;
         CanvasFrames.Clear();
         CanvasHtmlStatus = "";
         CanvasStatus = "Canvas cleared.";
         OnPropertyChanged(nameof(HasCanvasFrames));
+        OnPropertyChanged(nameof(HasCanvasSurfaces));
     }
 
     private static bool IsCanvasServerEnvelope(string type)
-        => type is "canvas_present" or "canvas_hide" or "canvas_navigate" or "canvas_snapshot" or "a2ui_push" or "a2ui_reset" or "a2ui_eval";
+        => type is "canvas_present" or "canvas_hide" or "canvas_navigate" or "canvas_snapshot" or "a2ui_push" or "a2ui_reset" or "a2ui_eval" or "a2ui_create_surface" or "a2ui_update_components" or "a2ui_update_data_model" or "a2ui_delete_surface" or "a2ui_sync_ui_to_data";
 }

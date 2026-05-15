@@ -134,6 +134,11 @@ internal static partial class RuntimeInitializationExtensions
             new A2UiPushTool(services.CanvasBroker, config),
             new A2UiResetTool(services.CanvasBroker, config),
             new A2UiEvalTool(services.CanvasBroker, config),
+            new A2UiCreateSurfaceTool(services.CanvasBroker, config),
+            new A2UiUpdateComponentsTool(services.CanvasBroker, config),
+            new A2UiUpdateDataModelTool(services.CanvasBroker, config),
+            new A2UiDeleteSurfaceTool(services.CanvasBroker, config),
+            new A2UiSyncUiToDataTool(services.CanvasBroker, config),
 
             new EditFileTool(config.Tooling),
             new ApplyPatchTool(config.Tooling),

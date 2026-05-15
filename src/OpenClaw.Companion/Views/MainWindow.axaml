@@ -155,14 +155,24 @@
                 <Grid RowDefinitions="Auto,*" RowSpacing="10">
                     <Border Grid.Row="0" Padding="10" CornerRadius="8" BorderThickness="1"
                             BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="{Binding CanvasStatus}" TextWrapping="Wrap" />
                                 <TextBlock Text="{Binding CanvasHtmlStatus}" FontSize="11" Opacity="0.65"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding HasCanvasHtmlStatus}" />
                             </StackPanel>
-                            <Button Grid.Column="1" Content="Clear"
+                            <ComboBox x:Name="CanvasSurfaceSelector" Grid.Column="1" MinWidth="180"
+                                      ItemsSource="{Binding CanvasSurfaces}"
+                                      SelectedItem="{Binding ActiveCanvasSurface}"
+                                      IsVisible="{Binding HasCanvasSurfaces}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate DataType="vm:A2UiSurfaceItem">
+                                        <TextBlock Text="{Binding Title}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <Button Grid.Column="2" Content="Clear"
                                     Command="{Binding ClearCanvasCommand}" />
                         </Grid>
                     </Border>
@@ -176,7 +186,7 @@
                                        IsVisible="{Binding !HasCanvasFrames}" />
                             <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
                                           IsVisible="{Binding HasCanvasFrames}">
-                                <ItemsControl ItemsSource="{Binding CanvasFrames}">
+                                <ItemsControl x:Name="CanvasComponentHost" ItemsSource="{Binding ActiveCanvasSurface.Components}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="vm:A2UiFrameItem">
                                             <Border Margin="0,0,0,8" Padding="10" CornerRadius="6" BorderThickness="1"
@@ -225,6 +235,9 @@
                                                                FontFamily="Consolas, Menlo, monospace"
                                                                FontSize="12"
                                                                IsVisible="{Binding HasDisplayText}" />
+                                                    <TextBlock Text="{Binding Type, StringFormat='Unsupported component: {0}'}"
+                                                               FontSize="11" Opacity="0.65" TextWrapping="Wrap"
+                                                               IsVisible="{Binding IsUnsupportedFallback}" />
                                                 </StackPanel>
                                             </Border>
                                         </DataTemplate>

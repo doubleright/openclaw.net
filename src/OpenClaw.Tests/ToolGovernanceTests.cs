@@ -207,7 +207,8 @@ public sealed class ToolGovernanceTests
             "shell", "read_file", "write_file", "process", "memory", "memory_search", "project_memory",
             "sessions", "session_search", "profile_read", "todo", "automation", "vision_analyze",
             "text_to_speech", "canvas_present", "canvas_hide", "canvas_navigate", "canvas_snapshot",
-            "a2ui_push", "a2ui_reset", "a2ui_eval", "edit_file", "apply_patch", "sessions_history",
+            "a2ui_push", "a2ui_reset", "a2ui_eval", "a2ui_create_surface", "a2ui_update_components",
+            "a2ui_update_data_model", "a2ui_delete_surface", "a2ui_sync_ui_to_data", "edit_file", "apply_patch", "sessions_history",
             "sessions_send", "sessions_spawn", "session_status", "agents_list", "cron", "gateway",
             "message", "x_search", "memory_get", "profile_write", "sessions_yield", "browser",
             "external_cli", "payment", "stream_echo", "web_search", "web_fetch", "git", "code_exec",
@@ -229,6 +230,22 @@ public sealed class ToolGovernanceTests
         Assert.False(todo.ReadOnly);
         Assert.False(sessions.ReadOnly);
         Assert.False(cron.ReadOnly);
+    }
+
+    [Theory]
+    [InlineData("a2ui_create_surface")]
+    [InlineData("a2ui_update_components")]
+    [InlineData("a2ui_update_data_model")]
+    [InlineData("a2ui_delete_surface")]
+    [InlineData("a2ui_sync_ui_to_data")]
+    public void DescriptorCatalog_A2UiV09ToolsAreUiWriteWithoutCodeExecution(string toolName)
+    {
+        var descriptor = ToolGovernanceDescriptorCatalog.Resolve(toolName, toolName, new ToolActionDescriptor());
+
+        Assert.False(descriptor.ReadOnly);
+        Assert.Contains("ui.write", descriptor.Capabilities);
+        Assert.False(descriptor.CanExecuteCode);
+        Assert.DoesNotContain("code.execute", descriptor.Capabilities);
     }
 
     private static OpenClawToolExecutor CreateExecutor(

@@ -113,6 +113,11 @@ public static class ToolGovernanceDescriptorCatalog
         Write("a2ui_push", "canvas", ToolGovernanceRiskLevel.Medium, ["ui.write"]),
         Write("a2ui_reset", "canvas", ToolGovernanceRiskLevel.Medium, ["ui.write"]),
         Write("a2ui_eval", "canvas", ToolGovernanceRiskLevel.High, ["ui.evaluate", "code.execute"], executeCode: true, approval: true),
+        Write("a2ui_create_surface", "canvas", ToolGovernanceRiskLevel.Medium, ["ui.write"]),
+        Write("a2ui_update_components", "canvas", ToolGovernanceRiskLevel.Medium, ["ui.write"]),
+        Write("a2ui_update_data_model", "canvas", ToolGovernanceRiskLevel.Medium, ["ui.write"]),
+        Write("a2ui_delete_surface", "canvas", ToolGovernanceRiskLevel.Medium, ["ui.write"]),
+        Write("a2ui_sync_ui_to_data", "canvas", ToolGovernanceRiskLevel.Medium, ["ui.write"]),
 
         Write("external_cli", "external-cli", ToolGovernanceRiskLevel.High, ["process.execute", "external.cli"], fileSystem: true, executeCode: true, approval: true),
         Write("payment", "payment", ToolGovernanceRiskLevel.Critical, ["payment.execute", "data.export"], external: true, approval: true),

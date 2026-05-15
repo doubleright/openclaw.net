@@ -1,7 +1,10 @@
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenClaw.Channels;
 using OpenClaw.Core.Abstractions;
+using OpenClaw.Core.Canvas;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
 using OpenClaw.Gateway;
@@ -92,6 +95,287 @@ public sealed class CanvasToolTests
         Assert.Contains("eval is disabled", result, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task A2UiCreateSurface_MinimalSurfaceIdSendsV09Envelope()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiCreateSurfaceTool(broker, new GatewayConfig());
+
+        var executeTask = tool.ExecuteAsync(
+            JsonSerializer.Serialize(new { surfaceId = "surface-1" }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+        var sent = await WaitForSentEnvelopeAsync(ws);
+        await AckAsync(broker, "client", sent, "sess");
+        var result = await executeTask;
+
+        Assert.Contains("Canvas command accepted", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("a2ui_create_surface", sent.Type);
+        Assert.Equal("createSurface", sent.Operation);
+        Assert.Equal("surface-1", sent.SurfaceId);
+        Assert.Equal(A2UiCatalogRegistry.AGenUiCatalogId, sent.CatalogId);
+        Assert.Null(sent.SurfaceTitle);
+        Assert.Null(sent.ParametersJson);
+        Assert.Null(sent.Components);
+        Assert.Null(sent.DataModelJson);
+    }
+
+    [Fact]
+    public async Task A2UiCreateSurface_OmittedCatalogRejectsUnsupportedComponentBeforeSend()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.OpenClawV08CatalogId]);
+        var tool = new A2UiCreateSurfaceTool(broker, new GatewayConfig());
+        var component = """{"type":"Icon","name":"home"}""";
+
+        var result = await tool.ExecuteAsync(
+            JsonSerializer.Serialize(new { surfaceId = "surface-1", components = new[] { component } }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+
+        Assert.Contains("unsupported component type 'Icon'", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(ws.Sent);
+    }
+
+    [Fact]
+    public async Task A2UiCreateSurface_RejectsMalformedOptionalComponentString()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiCreateSurfaceTool(broker, new GatewayConfig());
+
+        var result = await tool.ExecuteAsync(
+            JsonSerializer.Serialize(new { surfaceId = "surface-1", components = new[] { "not-json" } }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+
+        Assert.Contains("not valid JSON", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(ws.Sent);
+    }
+
+    [Theory]
+    [InlineData("not-json", "not valid JSON")]
+    [InlineData("[]", "must be a JSON object")]
+    public async Task A2UiCreateSurface_RejectsInvalidOrNonObjectOptionalDataModelJson(string dataModelJson, string expectedError)
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiCreateSurfaceTool(broker, new GatewayConfig());
+
+        var result = await tool.ExecuteAsync(
+            JsonSerializer.Serialize(new { surfaceId = "surface-1", dataModelJson }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+
+        Assert.Contains(expectedError, result, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(ws.Sent);
+    }
+
+    [Fact]
+    public async Task A2UiCreateSurface_SendsV09EnvelopeWithOptionalCatalogTitleMetadataComponentsAndDataModel()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiCreateSurfaceTool(broker, new GatewayConfig());
+        var metadata = """{"theme":"dark"}""";
+        var dataModelJson = """{"count":1}""";
+        var component = """{"type":"Text","text":"Hello"}""";
+        var argumentsJson = JsonSerializer.Serialize(new
+        {
+            surfaceId = "surface-1",
+            catalogId = A2UiCatalogRegistry.AGenUiCatalogId,
+            title = "Dashboard",
+            metadata,
+            components = new[] { component },
+            dataModelJson
+        });
+
+        var executeTask = tool.ExecuteAsync(argumentsJson, Context(senderId: "client"), CancellationToken.None);
+        var sent = await WaitForSentEnvelopeAsync(ws);
+        await AckAsync(broker, "client", sent, "sess");
+        var result = await executeTask;
+
+        Assert.Contains("Canvas command accepted", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("a2ui_create_surface", sent.Type);
+        Assert.Equal("createSurface", sent.Operation);
+        Assert.Equal("surface-1", sent.SurfaceId);
+        Assert.Equal(A2UiCatalogRegistry.AGenUiCatalogId, sent.CatalogId);
+        Assert.Equal("Dashboard", sent.SurfaceTitle);
+        Assert.Equal(metadata, sent.ParametersJson);
+        Assert.NotNull(sent.Components);
+        Assert.Equal([component], sent.Components);
+        Assert.Equal(dataModelJson, sent.DataModelJson);
+    }
+
+    [Fact]
+    public async Task A2UiV09Tools_MissingRequiredFieldsReturnToolErrors()
+    {
+        var broker = CreateBroker();
+        var config = new GatewayConfig();
+        var context = Context(senderId: "client");
+
+        Assert.Contains("'surfaceId' is required", await new A2UiCreateSurfaceTool(broker, config).ExecuteAsync("{}", context, CancellationToken.None), StringComparison.Ordinal);
+        Assert.Contains("'surfaceId' is required", await new A2UiUpdateComponentsTool(broker, config).ExecuteAsync("{}", context, CancellationToken.None), StringComparison.Ordinal);
+        Assert.Contains("'components' is required", await new A2UiUpdateComponentsTool(broker, config).ExecuteAsync("""{"surfaceId":"surface-1"}""", context, CancellationToken.None), StringComparison.Ordinal);
+        Assert.Contains("'surfaceId' is required", await new A2UiUpdateDataModelTool(broker, config).ExecuteAsync("{}", context, CancellationToken.None), StringComparison.Ordinal);
+        Assert.Contains("'dataModelJson' is required", await new A2UiUpdateDataModelTool(broker, config).ExecuteAsync("""{"surfaceId":"surface-1"}""", context, CancellationToken.None), StringComparison.Ordinal);
+        Assert.Contains("'surfaceId' is required", await new A2UiDeleteSurfaceTool(broker, config).ExecuteAsync("{}", context, CancellationToken.None), StringComparison.Ordinal);
+        Assert.Contains("'surfaceId' is required", await new A2UiSyncUiToDataTool(broker, config).ExecuteAsync("{}", context, CancellationToken.None), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A2UiCreateSurface_MissingV09CapabilityReturnsError()
+    {
+        var (broker, _) = CreateConnectedBroker(["a2ui.v0_8"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiCreateSurfaceTool(broker, new GatewayConfig());
+
+        var result = await tool.ExecuteAsync(
+            JsonSerializer.Serialize(new
+            {
+                surfaceId = "surface-1",
+                catalogId = A2UiCatalogRegistry.AGenUiCatalogId,
+                title = "Dashboard",
+                metadata = "{}"
+            }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+
+        Assert.Contains("a2ui.v0_9", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A2UiV09UpdateDeleteAndSyncTools_MissingV09CapabilityReturnsError()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_8"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var config = new GatewayConfig();
+        var context = Context(senderId: "client");
+        var component = """{"type":"Text","text":"Hello"}""";
+
+        Assert.Contains("a2ui.v0_9", await new A2UiUpdateComponentsTool(broker, config).ExecuteAsync(JsonSerializer.Serialize(new { surfaceId = "surface-1", components = new[] { component } }), context, CancellationToken.None), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("a2ui.v0_9", await new A2UiUpdateDataModelTool(broker, config).ExecuteAsync(JsonSerializer.Serialize(new { surfaceId = "surface-1", dataModelJson = "{}" }), context, CancellationToken.None), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("a2ui.v0_9", await new A2UiDeleteSurfaceTool(broker, config).ExecuteAsync("""{"surfaceId":"surface-1"}""", context, CancellationToken.None), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("a2ui.v0_9", await new A2UiSyncUiToDataTool(broker, config).ExecuteAsync("""{"surfaceId":"surface-1"}""", context, CancellationToken.None), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(ws.Sent);
+    }
+
+    [Fact]
+    public async Task A2UiUpdateComponents_RejectsInvalidComponentJsonAndAcceptsValidStringArray()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiUpdateComponentsTool(broker, new GatewayConfig());
+
+        var invalidResult = await tool.ExecuteAsync(
+            JsonSerializer.Serialize(new { surfaceId = "surface-1", components = new[] { "not-json" } }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+
+        Assert.Contains("not valid JSON", invalidResult, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(ws.Sent);
+
+        var component = """{"type":"Text","text":"Hello"}""";
+        var executeTask = tool.ExecuteAsync(
+            JsonSerializer.Serialize(new { surfaceId = "surface-1", components = new[] { component } }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+        var sent = await WaitForSentEnvelopeAsync(ws);
+        await AckAsync(broker, "client", sent, "sess");
+        var result = await executeTask;
+
+        Assert.Contains("Canvas command accepted", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("a2ui_update_components", sent.Type);
+        Assert.Equal("updateComponents", sent.Operation);
+        Assert.Equal("surface-1", sent.SurfaceId);
+        Assert.NotNull(sent.Components);
+        Assert.Equal([component], sent.Components);
+    }
+
+    [Theory]
+    [InlineData("not-json", "not valid JSON")]
+    [InlineData("[]", "must be a JSON object")]
+    public async Task A2UiUpdateDataModel_RejectsInvalidOrNonObjectJson(string dataModelJson, string expectedError)
+    {
+        var (broker, _) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiUpdateDataModelTool(broker, new GatewayConfig());
+
+        var result = await tool.ExecuteAsync(
+            JsonSerializer.Serialize(new { surfaceId = "surface-1", dataModelJson }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+
+        Assert.Contains(expectedError, result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A2UiUpdateDataModel_SendsV09Envelope()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiUpdateDataModelTool(broker, new GatewayConfig());
+        var dataModelJson = """{"count":2}""";
+
+        var executeTask = tool.ExecuteAsync(
+            JsonSerializer.Serialize(new { surfaceId = "surface-1", dataModelJson }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+        var sent = await WaitForSentEnvelopeAsync(ws);
+        await AckAsync(broker, "client", sent, "sess");
+        var result = await executeTask;
+
+        Assert.Contains("Canvas command accepted", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("a2ui_update_data_model", sent.Type);
+        Assert.Equal("updateDataModel", sent.Operation);
+        Assert.Equal("surface-1", sent.SurfaceId);
+        Assert.Equal(dataModelJson, sent.DataModelJson);
+    }
+
+    [Fact]
+    public async Task A2UiDeleteSurface_SendsV09Envelope()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiDeleteSurfaceTool(broker, new GatewayConfig());
+
+        var executeTask = tool.ExecuteAsync("""{"surfaceId":"surface-1"}""", Context(senderId: "client"), CancellationToken.None);
+        var sent = await WaitForSentEnvelopeAsync(ws);
+        await AckAsync(broker, "client", sent, "sess");
+        var result = await executeTask;
+
+        Assert.Contains("Canvas command accepted", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("a2ui_delete_surface", sent.Type);
+        Assert.Equal("deleteSurface", sent.Operation);
+        Assert.Equal("surface-1", sent.SurfaceId);
+    }
+
+    [Fact]
+    public async Task A2UiSyncUiToData_SendsV09EnvelopeWithOptionalFields()
+    {
+        var (broker, ws) = CreateConnectedBroker(["a2ui.v0_9"], [A2UiCatalogRegistry.AGenUiCatalogId]);
+        var tool = new A2UiSyncUiToDataTool(broker, new GatewayConfig());
+
+        var executeTask = tool.ExecuteAsync(
+            JsonSerializer.Serialize(new
+            {
+                surfaceId = "surface-1",
+                componentId = "component-1",
+                syncMode = "merge"
+            }),
+            Context(senderId: "client"),
+            CancellationToken.None);
+        var sent = await WaitForSentEnvelopeAsync(ws);
+        await broker.HandleClientEnvelopeAsync("client", new WsClientEnvelope
+        {
+            Type = "a2ui_sync_result",
+            RequestId = sent.RequestId,
+            SessionId = "sess",
+            SurfaceId = "surface-1",
+            Success = true,
+            ValueJson = "{\"value\":\"updated\"}"
+        }, CancellationToken.None);
+        var result = await executeTask;
+
+        Assert.Equal("{\"value\":\"updated\"}", result);
+        Assert.Equal("a2ui_sync_ui_to_data", sent.Type);
+        Assert.Equal("syncUIToData", sent.Operation);
+        Assert.Equal("surface-1", sent.SurfaceId);
+        Assert.Equal("component-1", sent.ComponentId);
+        Assert.Equal("merge", sent.SyncMode);
+        Assert.Null(sent.DataModelJson);
+    }
+
     private static CanvasCommandBroker CreateBroker(GatewayConfig? config = null)
         => new(
             config ?? new GatewayConfig(),
@@ -100,14 +384,63 @@ public sealed class CanvasToolTests
                 Path.Combine(Path.GetTempPath(), "openclaw-tests", Guid.NewGuid().ToString("N")),
                 NullLogger<RuntimeEventStore>.Instance));
 
-    private static ToolExecutionContext Context(string channelId = "websocket")
+    private static async Task AckAsync(CanvasCommandBroker broker, string clientId, WsServerEnvelope sent, string sessionId)
+        => await broker.HandleClientEnvelopeAsync(clientId, new WsClientEnvelope
+        {
+            Type = "canvas_ack",
+            RequestId = sent.RequestId,
+            SessionId = sessionId,
+            Success = true
+        }, CancellationToken.None);
+
+    private static (CanvasCommandBroker Broker, TestWebSocket WebSocket) CreateConnectedBroker(
+        string[] capabilities,
+        string[] supportedCatalogIds,
+        GatewayConfig? config = null)
+    {
+        var channel = new WebSocketChannel(new WebSocketConfig());
+        var ws = new TestWebSocket();
+        Assert.True(channel.TryAddConnectionForTest("client", ws, IPAddress.Loopback, useJsonEnvelope: true));
+        var broker = new CanvasCommandBroker(
+            config ?? new GatewayConfig(),
+            channel,
+            new RuntimeEventStore(
+                Path.Combine(Path.GetTempPath(), "openclaw-tests", Guid.NewGuid().ToString("N")),
+                NullLogger<RuntimeEventStore>.Instance));
+        broker.HandleClientEnvelopeAsync("client", new WsClientEnvelope
+        {
+            Type = "canvas_ready",
+            Capabilities = capabilities,
+            SupportedCatalogIds = supportedCatalogIds
+        }, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        return (broker, ws);
+    }
+
+    private static async Task<WsServerEnvelope> WaitForSentEnvelopeAsync(TestWebSocket ws, int skip = 0)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if (ws.Sent.Count > skip)
+            {
+                var payload = Encoding.UTF8.GetString(ws.Sent.Skip(skip).Last());
+                return JsonSerializer.Deserialize(payload, CoreJsonContext.Default.WsServerEnvelope)
+                    ?? throw new InvalidOperationException("Sent payload was not a websocket envelope.");
+            }
+
+            await Task.Delay(10);
+        }
+
+        throw new TimeoutException("Timed out waiting for websocket send.");
+    }
+
+    private static ToolExecutionContext Context(string channelId = "websocket", string senderId = "client")
         => new()
         {
             Session = new Session
             {
                 Id = "sess",
                 ChannelId = channelId,
-                SenderId = "client"
+                SenderId = senderId
             },
             TurnContext = new TurnContext
             {

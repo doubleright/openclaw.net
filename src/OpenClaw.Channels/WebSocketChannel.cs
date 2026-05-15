@@ -114,7 +114,7 @@ public sealed class WebSocketChannel : IChannelAdapter
                 if (parsed.CanvasEnvelope is not null)
                 {
                     await HandleCanvasClientEnvelopeAsync(clientId, parsed.CanvasEnvelope, ct);
-                    if (!string.Equals(parsed.CanvasEnvelope.Type, "a2ui_event", StringComparison.Ordinal))
+                    if (!IsCanvasClientInteractionEnvelope(parsed.CanvasEnvelope.Type))
                         continue;
                 }
 
@@ -130,7 +130,9 @@ public sealed class WebSocketChannel : IChannelAdapter
                     RequestId = parsed.CanvasEnvelope?.RequestId,
                     SurfaceId = parsed.CanvasEnvelope?.SurfaceId,
                     ComponentId = parsed.CanvasEnvelope?.ComponentId,
-                    Event = parsed.CanvasEnvelope?.Event,
+                    Event = string.Equals(parsed.CanvasEnvelope?.Type, "a2ui_action", StringComparison.Ordinal)
+                        ? parsed.CanvasEnvelope?.Action
+                        : parsed.CanvasEnvelope?.Event,
                     ValueJson = parsed.CanvasEnvelope?.ValueJson,
                     Sequence = parsed.CanvasEnvelope?.Sequence,
                     ApprovalId = parsed.ApprovalId,
@@ -552,9 +554,12 @@ public sealed class WebSocketChannel : IChannelAdapter
 
             if (env is not null && IsCanvasClientEnvelope(env.Type))
             {
-                var text = string.Equals(env.Type, "a2ui_event", StringComparison.Ordinal)
-                    ? BuildA2UiEventText(env)
-                    : "";
+                var text = env.Type switch
+                {
+                    "a2ui_event" => BuildA2UiEventText(env),
+                    "a2ui_action" => BuildA2UiActionText(env),
+                    _ => ""
+                };
                 return new ParsedWsInbound(
                     true,
                     env.Type,
@@ -582,7 +587,10 @@ public sealed class WebSocketChannel : IChannelAdapter
     }
 
     private static bool IsCanvasClientEnvelope(string? type)
-        => type is "canvas_ready" or "canvas_ack" or "canvas_snapshot_result" or "canvas_eval_result" or "a2ui_event";
+        => type is "canvas_ready" or "canvas_ack" or "canvas_snapshot_result" or "canvas_eval_result" or "a2ui_event" or "a2ui_action" or "a2ui_error" or "a2ui_sync_result";
+
+    private static bool IsCanvasClientInteractionEnvelope(string? type)
+        => type is "a2ui_event" or "a2ui_action";
 
     private static string BuildA2UiEventText(WsClientEnvelope env)
     {
@@ -593,6 +601,21 @@ public sealed class WebSocketChannel : IChannelAdapter
                $"  \"componentId\": {JsonStringLiteral(env.ComponentId ?? "")},\n" +
                $"  \"event\": {JsonStringLiteral(env.Event ?? "")},\n" +
                $"  \"value\": {value},\n" +
+               $"  \"sequence\": {(env.Sequence ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture)}\n" +
+               "}";
+    }
+
+    private static string BuildA2UiActionText(WsClientEnvelope env)
+    {
+        var value = NormalizeJsonValue(env.ValueJson);
+        var dataModel = NormalizeJsonValue(env.DataModelJson);
+        return "{\n" +
+               "  \"type\": \"a2ui_action\",\n" +
+               $"  \"surfaceId\": {JsonStringLiteral(env.SurfaceId ?? "main")},\n" +
+               $"  \"componentId\": {JsonStringLiteral(env.ComponentId ?? "")},\n" +
+               $"  \"action\": {JsonStringLiteral(env.Action ?? "")},\n" +
+               $"  \"value\": {value},\n" +
+               $"  \"dataModel\": {dataModel},\n" +
                $"  \"sequence\": {(env.Sequence ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture)}\n" +
                "}";
     }
