@@ -29,6 +29,7 @@ public sealed class OpenClawHttpClient : IDisposable
     private readonly Uri _integrationSessionSearchUri;
     private readonly Uri _integrationProfilesUri;
     private readonly Uri _integrationToolPresetsUri;
+    private readonly Uri _integrationWorkflowsUri;
     private readonly Uri _integrationAutomationsUri;
     private readonly Uri _integrationRuntimeEventsUri;
     private readonly Uri _integrationMessagesUri;
@@ -105,6 +106,7 @@ public sealed class OpenClawHttpClient : IDisposable
         _integrationSessionSearchUri = new Uri(baseUri, "/api/integration/session-search");
         _integrationProfilesUri = new Uri(baseUri, "/api/integration/profiles");
         _integrationToolPresetsUri = new Uri(baseUri, "/api/integration/tool-presets");
+        _integrationWorkflowsUri = new Uri(baseUri, "/api/integration/workflows");
         _integrationAutomationsUri = new Uri(baseUri, "/api/integration/automations");
         _integrationRuntimeEventsUri = new Uri(baseUri, "/api/integration/runtime-events");
         _integrationMessagesUri = new Uri(baseUri, "/api/integration/messages");
@@ -685,6 +687,50 @@ public sealed class OpenClawHttpClient : IDisposable
     {
         using var req = new HttpRequestMessage(HttpMethod.Delete, BuildAutomationUri(automationId));
         return await SendAsync(req, CoreJsonContext.Default.MutationResponse, cancellationToken);
+    }
+
+    public Task<IntegrationAutomationRunsResponse> GetAutomationRunsAsync(string automationId, CancellationToken cancellationToken)
+        => GetAsync(BuildAutomationRunsUri(automationId), CoreJsonContext.Default.IntegrationAutomationRunsResponse, cancellationToken);
+
+    public Task<IntegrationAutomationRunDetailResponse> GetAutomationRunAsync(string automationId, string runId, CancellationToken cancellationToken)
+        => GetAsync(BuildAutomationRunDetailUri(automationId, runId), CoreJsonContext.Default.IntegrationAutomationRunDetailResponse, cancellationToken);
+
+    public async Task<MutationResponse> ReplayAutomationRunAsync(string automationId, string runId, CancellationToken cancellationToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, BuildAutomationRunReplayUri(automationId, runId));
+        return await SendAsync(req, CoreJsonContext.Default.MutationResponse, cancellationToken);
+    }
+
+    public async Task<MutationResponse> ClearAutomationQuarantineAsync(string automationId, CancellationToken cancellationToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, BuildAutomationQuarantineClearUri(automationId));
+        return await SendAsync(req, CoreJsonContext.Default.MutationResponse, cancellationToken);
+    }
+
+    public Task<IntegrationWorkflowsResponse> ListWorkflowsAsync(CancellationToken cancellationToken)
+        => GetAsync(_integrationWorkflowsUri, CoreJsonContext.Default.IntegrationWorkflowsResponse, cancellationToken);
+
+    public async Task<AgentWorkflowRunResult> RunWorkflowAsync(string workflowId, AgentWorkflowRequest request, CancellationToken cancellationToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, BuildWorkflowRunsUri(workflowId))
+        {
+            Content = BuildJsonContent(request, CoreJsonContext.Default.AgentWorkflowRequest)
+        };
+
+        return await SendAsync(req, CoreJsonContext.Default.AgentWorkflowRunResult, cancellationToken);
+    }
+
+    public Task<AgentWorkflowRunSnapshot> GetWorkflowRunAsync(string workflowId, string runId, CancellationToken cancellationToken)
+        => GetAsync(BuildWorkflowRunUri(workflowId, runId), CoreJsonContext.Default.AgentWorkflowRunSnapshot, cancellationToken);
+
+    public async Task<AgentWorkflowRunSnapshot> RespondWorkflowRunAsync(string workflowId, string runId, AgentWorkflowResponse response, CancellationToken cancellationToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, BuildWorkflowRunResponsesUri(workflowId, runId))
+        {
+            Content = BuildJsonContent(response, CoreJsonContext.Default.AgentWorkflowResponse)
+        };
+
+        return await SendAsync(req, CoreJsonContext.Default.AgentWorkflowRunSnapshot, cancellationToken);
     }
 
     public Task<IntegrationRuntimeEventsResponse> QueryRuntimeEventsAsync(
@@ -1400,6 +1446,45 @@ public sealed class OpenClawHttpClient : IDisposable
 
     private Uri BuildAutomationRunUri(string automationId)
         => new($"{BuildAutomationUri(automationId).AbsoluteUri}/run", UriKind.Absolute);
+
+    private Uri BuildAutomationRunsUri(string automationId)
+        => new($"{BuildAutomationUri(automationId).AbsoluteUri}/runs", UriKind.Absolute);
+
+    private Uri BuildAutomationRunDetailUri(string automationId, string runId)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+            throw new ArgumentException("Automation run id is required.", nameof(runId));
+
+        return new Uri($"{BuildAutomationRunsUri(automationId).AbsoluteUri}/{Uri.EscapeDataString(runId)}", UriKind.Absolute);
+    }
+
+    private Uri BuildAutomationRunReplayUri(string automationId, string runId)
+        => new($"{BuildAutomationRunDetailUri(automationId, runId).AbsoluteUri}/replay", UriKind.Absolute);
+
+    private Uri BuildAutomationQuarantineClearUri(string automationId)
+        => new($"{BuildAutomationUri(automationId).AbsoluteUri}/quarantine/clear", UriKind.Absolute);
+
+    private Uri BuildWorkflowUri(string workflowId)
+    {
+        if (string.IsNullOrWhiteSpace(workflowId))
+            throw new ArgumentException("Workflow id is required.", nameof(workflowId));
+
+        return new Uri($"{_integrationWorkflowsUri.AbsoluteUri.TrimEnd('/')}/{Uri.EscapeDataString(workflowId)}", UriKind.Absolute);
+    }
+
+    private Uri BuildWorkflowRunsUri(string workflowId)
+        => new($"{BuildWorkflowUri(workflowId).AbsoluteUri}/runs", UriKind.Absolute);
+
+    private Uri BuildWorkflowRunUri(string workflowId, string runId)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+            throw new ArgumentException("Workflow run id is required.", nameof(runId));
+
+        return new Uri($"{BuildWorkflowRunsUri(workflowId).AbsoluteUri}/{Uri.EscapeDataString(runId)}", UriKind.Absolute);
+    }
+
+    private Uri BuildWorkflowRunResponsesUri(string workflowId, string runId)
+        => new($"{BuildWorkflowRunUri(workflowId, runId).AbsoluteUri}/responses", UriKind.Absolute);
 
     private Uri BuildAutomationTemplatesUri(bool admin)
     {

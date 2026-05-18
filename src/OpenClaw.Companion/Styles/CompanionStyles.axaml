@@ -1,0 +1,72 @@
+<Styles xmlns="https://github.com/avaloniaui">
+    <Style Selector="TextBlock.page-title">
+        <Setter Property="FontSize" Value="22" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="TextBlock.section-title">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="TextBlock.muted">
+        <Setter Property="Opacity" Value="0.68" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="Border.section-card">
+        <Setter Property="Padding" Value="14" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseLowBrush}" />
+        <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" />
+    </Style>
+
+    <Style Selector="Border.metric-card">
+        <Setter Property="Padding" Value="12" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseLowBrush}" />
+        <Setter Property="MinHeight" Value="84" />
+    </Style>
+
+    <Style Selector="Border.badge">
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="8,3" />
+        <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumBrush}" />
+    </Style>
+
+    <Style Selector="TextBox.monospace">
+        <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="Button.primary">
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.danger">
+        <Setter Property="Background" Value="#a61f1f" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="BorderBrush" Value="#a61f1f" />
+    </Style>
+
+    <Style Selector="Border.empty-state">
+        <Setter Property="Padding" Value="24" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseLowBrush}" />
+    </Style>
+
+    <Style Selector="Border.error-banner">
+        <Setter Property="Padding" Value="10" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Background" Value="#3a1515" />
+        <Setter Property="BorderBrush" Value="#ff453a" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="Border.error-banner TextBlock">
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+</Styles>

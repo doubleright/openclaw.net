@@ -104,6 +104,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _client.OnTextMessage += HandleInboundText;
         _client.OnEnvelopeReceived += HandleCanvasEnvelope;
         _client.OnError += err => AddSystemMessage($"Error: {err}");
+        Messages.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasMessages));
+            OnPropertyChanged(nameof(HasNoMessages));
+        };
 
         LoadSettings();
         RefreshManagedGatewayStateCore();

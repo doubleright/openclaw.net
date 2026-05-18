@@ -405,12 +405,18 @@ public sealed partial class MainWindowViewModel
 
         if (!_isLoadingSettings)
             SaveSettings();
+
+        OnPropertyChanged(nameof(SetupProviderSummary));
+        OnPropertyChanged(nameof(EmbeddedLocalModelDisabledReason));
+        OnPropertyChanged(nameof(HasEmbeddedLocalModelDisabledReason));
     }
 
     partial void OnSetupModelChanged(string value)
     {
         if (!_isLoadingSettings)
             SaveSettings();
+
+        OnPropertyChanged(nameof(SetupProviderSummary));
     }
 
     partial void OnSetupModelPresetChanged(string value)

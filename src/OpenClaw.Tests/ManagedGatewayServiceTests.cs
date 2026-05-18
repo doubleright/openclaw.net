@@ -3,6 +3,7 @@ using Xunit;
 
 namespace OpenClaw.Tests;
 
+[Collection(EnvironmentVariableCollection.Name)]
 public sealed class ManagedGatewayServiceTests : IDisposable
 {
     private readonly string _tempDir;

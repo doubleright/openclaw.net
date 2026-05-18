@@ -16,5 +16,6 @@
   
     <Application.Styles>
         <FluentTheme />
+        <StyleInclude Source="avares://OpenClaw.Companion/Styles/CompanionStyles.axaml" />
     </Application.Styles>
 </Application>

@@ -114,6 +114,7 @@ public sealed partial class MainWindowViewModel
         OnPropertyChanged(nameof(QueueSeverity));
         OnPropertyChanged(nameof(QueueSeverityIsLight));
         OnPropertyChanged(nameof(QueueSeverityIsHeavy));
+        OnPropertyChanged(nameof(PendingApprovalsBadge));
     }
 
     [RelayCommand(CanExecute = nameof(CanRefreshApprovals))]
@@ -363,6 +364,25 @@ public sealed partial class MainWindowViewModel
 
     private async Task SubmitApprovalDecisionAsync(PendingApprovalItem item, bool approved)
     {
+        if (!approved)
+        {
+            var confirmed = await ConfirmMutationAsync(
+                "Deny approval",
+                $"Deny '{item.ToolName}' from {item.Origin}?",
+                "Deny");
+            if (!confirmed)
+                return;
+        }
+        else if (item.IsMutation)
+        {
+            var confirmed = await ConfirmMutationAsync(
+                "Approve mutation",
+                $"Approve mutation tool '{item.ToolName}' from {item.Origin}? Review the arguments before continuing.",
+                "Approve");
+            if (!confirmed)
+                return;
+        }
+
         using var client = CreateAdminClient(out var error);
         if (client is null)
         {

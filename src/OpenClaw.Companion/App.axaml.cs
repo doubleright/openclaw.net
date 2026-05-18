@@ -34,10 +34,12 @@ public partial class App : Application
             var viewModel = new MainWindowViewModel(settings, _client, managedGateway: _managedGateway);
             viewModel.AttachDesktopNotifier(new DesktopNotifier());
 
-            desktop.MainWindow = new MainWindow
+            var mainWindow = new MainWindow
             {
                 DataContext = viewModel,
             };
+            viewModel.AttachConfirmationDialogService(new WindowConfirmationDialogService(mainWindow));
+            desktop.MainWindow = mainWindow;
 
             viewModel.StartApprovalsPolling();
             var initializeLocalGatewayTask = viewModel.InitializeLocalGatewayAsync();

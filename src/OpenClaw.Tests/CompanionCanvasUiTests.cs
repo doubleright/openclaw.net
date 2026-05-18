@@ -56,8 +56,10 @@ public sealed class CompanionCanvasUiTests : IDisposable
             Dispatcher.UIThread.RunJobs();
 
             var tabControl = window.GetVisualDescendants().OfType<TabControl>().Single();
-            tabControl.SelectedIndex = 2;
+            var canvasTab = GetTabByHeader(tabControl, "Canvas");
+            tabControl.SelectedItem = canvasTab;
             Dispatcher.UIThread.RunJobs();
+            Assert.Same(canvasTab, tabControl.SelectedItem);
 
             var selector = window.FindControl<ComboBox>("CanvasSurfaceSelector");
             Assert.NotNull(selector);
@@ -84,6 +86,46 @@ public sealed class CompanionCanvasUiTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void MainWindow_RendersRuntimeConsoleShellAndNavigationSections()
+    {
+        var viewModel = CreateViewModel();
+        var window = new MainWindow
+        {
+            Width = 1100,
+            Height = 760,
+            DataContext = viewModel
+        };
+        try
+        {
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var tabControl = window.GetVisualDescendants().OfType<TabControl>().Single();
+            Assert.Equal(Dock.Left, tabControl.TabStripPlacement);
+            Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), text => string.Equals(text.Text, "OpenClaw.NET Companion", StringComparison.Ordinal));
+
+            var headers = tabControl.Items.OfType<TabItem>().Select(static item => item.Header?.ToString()).ToArray();
+            Assert.Contains("Home", headers);
+            Assert.Contains("Sessions", headers);
+            Assert.Contains("Runtime Events", headers);
+            Assert.Contains("Plugins & Channels", headers);
+            Assert.Contains("Payment Lab", headers);
+
+            var sessionsTab = GetTabByHeader(tabControl, "Sessions");
+            tabControl.SelectedItem = sessionsTab;
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Same(sessionsTab, tabControl.SelectedItem);
+            Assert.Equal(Array.IndexOf(headers, "Sessions"), viewModel.SelectedSectionIndex);
+            Assert.Same(sessionsTab.Content, tabControl.SelectedContent);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     private MainWindowViewModel CreateViewModel()
     {
         var dir = Path.Combine(Path.GetTempPath(), "openclaw-companion-canvas-ui-tests", Guid.NewGuid().ToString("N"));
@@ -94,6 +136,11 @@ public sealed class CompanionCanvasUiTests : IDisposable
         client.SetConnectedSocketForTest(new TestWebSocket());
         return new MainWindowViewModel(new SettingsStore(dir), client);
     }
+
+    private static TabItem GetTabByHeader(TabControl tabControl, string header)
+        => tabControl.Items
+            .OfType<TabItem>()
+            .Single(item => string.Equals(item.Header?.ToString(), header, StringComparison.Ordinal));
 
     private static WsServerEnvelope CreateSurfaceEnvelope(string surfaceId, string title, string[] components)
         => new()
