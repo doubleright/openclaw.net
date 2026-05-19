@@ -35,6 +35,19 @@
       "expectedSkillNames": ["tavily-search"]
     },
     {
+      "id": "tweetclaw",
+      "category": "ts-jiti-plugin",
+      "kind": "npm-plugin",
+      "spec": "@xquik/tweetclaw@1.6.31",
+      "packageName": "@xquik/tweetclaw",
+      "pluginId": "tweetclaw",
+      "installExtraPackages": ["jiti"],
+      "expectedStatus": "compatible",
+      "configJson": "{}",
+      "expectedToolNames": ["explore", "tweetclaw"],
+      "expectedSkillNames": ["tweetclaw"]
+    },
+    {
       "id": "openclaw-tavily-invalid-config",
       "category": "config-schema-plugin",
       "kind": "npm-plugin",
