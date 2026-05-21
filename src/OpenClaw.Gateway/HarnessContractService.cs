@@ -97,11 +97,8 @@ internal sealed class HarnessContractService
         if ((contract.WriteSet ?? []).Count > 0)
             risk = MaxRisk(risk, HarnessContractRiskLevels.Medium);
 
-        foreach (var action in contract.PlannedActions ?? [])
+        foreach (var action in (contract.PlannedActions ?? []).Where(static action => action is not null))
         {
-            if (action is null)
-                continue;
-
             if (!string.IsNullOrWhiteSpace(action.RiskLevel))
             {
                 risk = MaxRisk(risk, action.RiskLevel);

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -69,11 +70,9 @@ public sealed class FileHarnessContractStore : IHarnessContractStore
             {
                 throw;
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
-            }
-            catch (NullReferenceException)
-            {
+                Trace.TraceWarning("Skipping invalid harness contract file '{0}': {1}", file.FullName, ex.Message);
             }
         }
 
