@@ -76,7 +76,7 @@ public sealed class FileEvidenceBundleStore : IEvidenceBundleStore
             }
         }
 
-        var limit = Math.Clamp(query.Limit, 1, 500);
+        var limit = Math.Clamp(query.Limit, 1, 5000);
         return results
             .OrderByDescending(static item => item.UpdatedAtUtc)
             .ThenByDescending(static item => item.CreatedAtUtc)

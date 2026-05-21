@@ -313,11 +313,15 @@ internal sealed class AdminObservabilityService
             (startUtc, endUtc, _) = NormalizeRange(fromUtc, toUtc, defaultWindow: TimeSpan.FromHours(24), applyRetention: false);
         }
 
-        var sessions = await ListTrajectorySessionsAsync(sessionId, ct);
+        var sessions = (await ListTrajectorySessionsAsync(sessionId, ct))
+            .OrderBy(static item => item.CreatedAt)
+            .ThenBy(static item => item.Id, StringComparer.Ordinal)
+            .ToArray();
+        var evidenceBySession = await LoadEvidenceBySessionAsync(sessions, startUtc, endUtc, includeEvidence, ct);
         await using var ms = new MemoryStream();
         await using (var writer = new StreamWriter(ms, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true))
         {
-            foreach (var session in sessions.OrderBy(static item => item.CreatedAt).ThenBy(static item => item.Id, StringComparer.Ordinal))
+            foreach (var session in sessions)
             {
                 ct.ThrowIfCancellationRequested();
 
@@ -339,18 +343,9 @@ internal sealed class AdminObservabilityService
                     }
                 }
 
-                if (includeEvidence && _evidenceBundles is not null)
+                if (evidenceBySession.TryGetValue(session.Id, out var evidence))
                 {
-                    var evidence = await _evidenceBundles.ListAsync(
-                        new EvidenceBundleListQuery
-                        {
-                            SourceSessionId = session.Id,
-                            CreatedFromUtc = startUtc == DateTimeOffset.MinValue ? null : startUtc,
-                            CreatedToUtc = endUtc,
-                            Limit = 500
-                        },
-                        ct);
-                    foreach (var bundle in evidence.OrderBy(static item => item.CreatedAtUtc).ThenBy(static item => item.Id, StringComparer.Ordinal))
+                    foreach (var bundle in evidence)
                     {
                         await WriteTrajectoryRecordAsync(writer, BuildEvidenceTrajectoryRecord(session, bundle, anonymize), ct);
                     }
@@ -359,6 +354,43 @@ internal sealed class AdminObservabilityService
         }
 
         return ms.ToArray();
+    }
+
+    private async Task<IReadOnlyDictionary<string, IReadOnlyList<EvidenceBundle>>> LoadEvidenceBySessionAsync(
+        IReadOnlyList<Session> sessions,
+        DateTimeOffset startUtc,
+        DateTimeOffset endUtc,
+        bool includeEvidence,
+        CancellationToken ct)
+    {
+        if (!includeEvidence || _evidenceBundles is null || sessions.Count == 0)
+            return new Dictionary<string, IReadOnlyList<EvidenceBundle>>(StringComparer.Ordinal);
+
+        var sessionIds = sessions
+            .Select(static session => session.Id)
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.Ordinal);
+        if (sessionIds.Count == 0)
+            return new Dictionary<string, IReadOnlyList<EvidenceBundle>>(StringComparer.Ordinal);
+
+        var query = new EvidenceBundleListQuery
+        {
+            SourceSessionId = sessions.Count == 1 ? sessions[0].Id : null,
+            CreatedFromUtc = startUtc == DateTimeOffset.MinValue ? null : startUtc,
+            CreatedToUtc = endUtc,
+            Limit = 5000
+        };
+        var evidence = await _evidenceBundles.ListAsync(query, ct);
+        return evidence
+            .Where(bundle => !string.IsNullOrWhiteSpace(bundle.SourceSessionId) && sessionIds.Contains(bundle.SourceSessionId))
+            .GroupBy(static bundle => bundle.SourceSessionId!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<EvidenceBundle>)group
+                    .OrderBy(static item => item.CreatedAtUtc)
+                    .ThenBy(static item => item.Id, StringComparer.Ordinal)
+                    .ToArray(),
+                StringComparer.Ordinal);
     }
 
     private IReadOnlyList<ApprovalHistoryEntry> ReadApprovalHistory(DateTimeOffset startUtc, DateTimeOffset endUtc)
@@ -545,11 +577,15 @@ internal sealed class AdminObservabilityService
             HumanReviews = bundle.HumanReviews.Select(review => new EvidenceHumanReview
             {
                 Reviewer = ExportOptionalId(review.Reviewer, anonymize),
-                Decision = review.Decision,
+                Decision = ExportText(review.Decision, anonymize, _redaction),
                 Notes = ExportText(review.Notes, anonymize, _redaction),
                 ReviewedAtUtc = review.ReviewedAtUtc
             }).ToArray(),
-            Tags = bundle.Tags,
+            Tags = bundle.Tags
+                .Select(tag => ExportText(tag, anonymize, _redaction))
+                .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+                .Select(static tag => tag!)
+                .ToArray(),
             Metadata = ExportEvidenceMetadata(bundle.Metadata, anonymize)
         };
     }
@@ -621,7 +657,7 @@ internal sealed class AdminObservabilityService
             : new EvidenceBundleMetadata
             {
                 CreatedBy = ExportOptionalId(metadata.CreatedBy, anonymize),
-                Source = metadata.Source,
+                Source = ExportText(metadata.Source, anonymize, _redaction),
                 CorrelationId = ExportOptionalId(metadata.CorrelationId, anonymize),
                 Properties = ExportStringDictionary(metadata.Properties, anonymize)
             };

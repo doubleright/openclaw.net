@@ -1027,7 +1027,25 @@ public sealed class GatewayAdminEndpointTests
                     Title = "Review",
                     Summary = "Contains alice@example.com and sk-testsecret123."
                 }
-            ]
+            ],
+            HumanReviews =
+            [
+                new EvidenceHumanReview
+                {
+                    Reviewer = "alice@example.com",
+                    Decision = "accepted for alice@example.com with sk-testsecret123",
+                    Notes = "Reviewed with sk-testsecret123."
+                }
+            ],
+            Tags = ["alice@example.com", "sk-testsecret123"],
+            Metadata = new EvidenceBundleMetadata
+            {
+                Source = "ticket for alice@example.com using sk-testsecret123",
+                Properties = new Dictionary<string, string>
+                {
+                    ["ticket"] = "alice@example.com sk-testsecret123"
+                }
+            }
         }, CancellationToken.None);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/admin/trajectory/export?sessionId=sess-trajectory&anonymize=true");
