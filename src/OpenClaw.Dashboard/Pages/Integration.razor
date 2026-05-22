@@ -1,0 +1,384 @@
+@page "/integration"
+@implements IDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject ISnackbar Snackbar
+
+@using System.Text.Json
+
+<PageTitle>@L["integration.title"] · OpenClaw</PageTitle>
+
+<section class="int-shell">
+
+    @* ── Header ───────────────────────────────────────────────────────── *@
+    <header class="int-hero">
+        <div class="int-hero__crumb">
+            <span class="int-hero__index">08</span>
+            <span class="int-hero__slash">/</span>
+            <span class="int-hero__crumb-text">integration · channel transmitter</span>
+        </div>
+        <h1 class="int-hero__title">@L["integration.title"]</h1>
+        <p class="int-hero__lead">@L["integration.testIntegration"]</p>
+    </header>
+
+    <div class="int-grid">
+        @* ── Form panel ───────────────────────────────────────────────── *@
+        <article class="int-panel int-panel--form">
+            <div class="int-panel__head">
+                <span class="int-eyebrow">compose · @L["integration.sendMessage"]</span>
+                <span class="int-panel__rule"></span>
+            </div>
+
+            <div class="int-field">
+                <label class="int-field__label">@L["integration.channel"]</label>
+                <MudSelect T="string"
+                           @bind-Value="_channel"
+                           Placeholder="@L["integration.channel"]"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true"
+                           Class="int-input">
+                    @foreach (var ch in _channelOptions)
+                    {
+                        <MudSelectItem Value="@ch">@ch</MudSelectItem>
+                    }
+                </MudSelect>
+            </div>
+
+            <div class="int-field">
+                <label class="int-field__label">@L["integration.senderId"]</label>
+                <MudTextField T="string"
+                              @bind-Value="_senderId"
+                              Placeholder="user@example.com"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Class="int-input" />
+            </div>
+
+            <div class="int-field">
+                <label class="int-field__label">@L["integration.messageContent"]</label>
+                <MudTextField T="string"
+                              @bind-Value="_content"
+                              Lines="6"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Class="int-input int-input--area"
+                              Placeholder="Hello from OpenClaw…" />
+            </div>
+
+            <div class="int-actions">
+                <MudButton StartIcon="@Icons.Material.Filled.Send"
+                           Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Disabled="@(_sending || !CanSend)"
+                           OnClick="SendMessage"
+                           Class="int-btn">
+                    @(_sending ? L["common.loading"] : L["integration.sendMessage"])
+                </MudButton>
+
+                <MudButton StartIcon="@Icons.Material.Filled.RestartAlt"
+                           Variant="Variant.Text"
+                           Color="Color.Default"
+                           Disabled="_sending"
+                           OnClick="ResetForm"
+                           Class="int-btn int-btn--ghost">
+                    @L["common.reset"]
+                </MudButton>
+            </div>
+        </article>
+
+        @* ── Result panel ────────────────────────────────────────────── *@
+        <article class="int-panel int-panel--result">
+            <div class="int-panel__head">
+                <span class="int-eyebrow">response · @L["integration.result"]</span>
+                <span class="int-panel__rule"></span>
+                @if (_statusCode.HasValue)
+                {
+                    <span class="int-status @StatusClass">@_statusCode @_statusReason</span>
+                }
+            </div>
+
+            @if (_sending)
+            {
+                <div class="int-result int-result--loading">
+                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+                    <span>@L["common.loading"]</span>
+                </div>
+            }
+            else if (_result is null)
+            {
+                <div class="int-result int-result--empty">
+                    <MudIcon Icon="@Icons.Material.Outlined.MarkChatRead" Size="Size.Large" />
+                    <span>@L["common.noData"]</span>
+                </div>
+            }
+            else
+            {
+                <pre class="int-result int-result--code"><code>@_result</code></pre>
+            }
+        </article>
+    </div>
+</section>
+
+@code {
+    private string _channel = "";
+    private string _senderId = "";
+    private string _content = "";
+    private string? _result;
+    private bool _sending;
+    private int? _statusCode;
+    private string? _statusReason;
+
+    private static readonly string[] _channelOptions =
+    {
+        "whatsapp", "telegram", "slack", "teams", "discord", "email", "sms", "webchat", "mqtt"
+    };
+
+    protected override void OnInitialized()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+    }
+
+    private bool CanSend =>
+        !string.IsNullOrWhiteSpace(_channel)
+        && !string.IsNullOrWhiteSpace(_senderId)
+        && !string.IsNullOrWhiteSpace(_content);
+
+    private string StatusClass => _statusCode switch
+    {
+        >= 200 and < 300 => "int-status--ok",
+        >= 400 and < 500 => "int-status--warn",
+        >= 500          => "int-status--err",
+        _               => "int-status--info"
+    };
+
+    private async Task SendMessage()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+
+        _sending = true;
+        _result = null;
+        _statusCode = null;
+        _statusReason = null;
+        StateHasChanged();
+
+        try
+        {
+            using var response = await Api.PostRawAsync("/admin/integration/message", new
+            {
+                channel = _channel,
+                senderId = _senderId,
+                content = _content
+            });
+
+            _statusCode = (int)response.StatusCode;
+            _statusReason = response.ReasonPhrase;
+
+            var body = await response.Content.ReadAsStringAsync();
+            _result = PrettifyJson(body);
+
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _sending = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ResetForm()
+    {
+        _channel = "";
+        _senderId = "";
+        _content = "";
+        _result = null;
+        _statusCode = null;
+        _statusReason = null;
+    }
+
+    private static string PrettifyJson(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+        }
+        catch
+        {
+            return raw;
+        }
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}
+
+<style>
+    .int-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+        padding: 8px 4px 48px;
+        max-width: 1480px;
+        margin: 0 auto;
+    }
+
+    /* ── Hero ─────────────────────────────────────────────────────────── */
+    .int-hero {
+        position: relative;
+        padding: 26px 32px 28px;
+        border-radius: 24px;
+        background:
+            radial-gradient(720px 320px at 0% 0%, rgba(34, 211, 238, 0.15), transparent 60%),
+            radial-gradient(720px 320px at 100% 100%, rgba(99, 102, 241, 0.14), transparent 65%),
+            linear-gradient(180deg, rgba(20, 26, 50, 0.55), rgba(11, 16, 32, 0.4));
+        border: 1px solid rgba(139, 146, 200, 0.16);
+        overflow: hidden;
+    }
+    .int-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.55), rgba(255, 255, 255, 0.35), rgba(99, 102, 241, 0.5), transparent);
+    }
+    .int-hero__crumb {
+        display: inline-flex; align-items: center; gap: 8px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+    .int-hero__index { color: #22d3ee; font-weight: 700; }
+    .int-hero__slash { color: var(--accent); }
+    .int-hero__title {
+        font-family: var(--font-display);
+        font-size: clamp(30px, 3.4vw, 44px);
+        font-weight: 500;
+        letter-spacing: -0.03em;
+        margin: 10px 0 4px;
+        color: var(--text-strong);
+    }
+    .int-hero__lead { margin: 0; color: var(--muted); font-size: 13px; }
+
+    /* ── Grid ─────────────────────────────────────────────────────────── */
+    .int-grid {
+        display: grid;
+        gap: 24px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+    @@media (max-width: 1100px) {
+        .int-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    .int-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 24px;
+        border-radius: 20px;
+        background: linear-gradient(180deg, rgba(20, 26, 50, 0.7), rgba(11, 16, 32, 0.55));
+        border: 1px solid rgba(139, 146, 200, 0.14);
+    }
+
+    .int-panel__head { display: flex; align-items: center; gap: 12px; }
+    .int-eyebrow {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+    .int-panel__rule {
+        flex: 1; height: 1px;
+        background: linear-gradient(90deg, var(--border-bold), transparent);
+    }
+
+    .int-status {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border-bold);
+        color: var(--text);
+    }
+    .int-status--ok   { color: var(--signal-ok);   border-color: rgba(52, 211, 153, 0.45); background: rgba(52, 211, 153, 0.1); }
+    .int-status--warn { color: var(--signal-warn); border-color: rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.1); }
+    .int-status--err  { color: var(--signal-err);  border-color: rgba(248, 113, 113, 0.45); background: rgba(248, 113, 113, 0.1); }
+    .int-status--info { color: var(--signal-info); border-color: rgba(96, 165, 250, 0.45);  background: rgba(96, 165, 250, 0.1); }
+
+    /* ── Fields ───────────────────────────────────────────────────────── */
+    .int-field { display: flex; flex-direction: column; gap: 6px; }
+    .int-field__label {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+    .int-input { width: 100%; }
+    .int-input--area .mud-input-slot { min-height: 140px; }
+
+    .int-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+    .int-btn { text-transform: none !important; letter-spacing: 0.01em; border-radius: 10px !important; }
+    .int-btn--ghost { color: var(--muted) !important; }
+
+    /* ── Result ───────────────────────────────────────────────────────── */
+    .int-result {
+        min-height: 320px;
+        max-height: 560px;
+        overflow: auto;
+        border-radius: 16px;
+        padding: 18px;
+        background: rgba(7, 10, 23, 0.8);
+        border: 1px solid rgba(139, 146, 200, 0.1);
+    }
+    .int-result--empty,
+    .int-result--loading {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 14px;
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        letter-spacing: 0.1em;
+    }
+    .int-result--loading .mud-progress-linear { width: min(420px, 60%); }
+    .int-result--code {
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        line-height: 1.65;
+        color: #d6d8f5;
+        white-space: pre;
+        word-break: normal;
+        tab-size: 2;
+    }
+    .int-result--code code { font-family: inherit; }
+</style>

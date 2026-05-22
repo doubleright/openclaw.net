@@ -1,0 +1,444 @@
+@page "/whatsapp"
+@implements IAsyncDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+@inject EventStreamService EventStream
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>@L["whatsapp.title"] · OpenClaw</PageTitle>
+
+@if (!Auth.HasRole("operator"))
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="my-4">
+        @L["auth.notAuthenticated"]
+    </MudAlert>
+    return;
+}
+
+<div class="oc-page">
+    <header class="oc-page__head">
+        <div class="oc-kicker">SYS · 03 / WHATSAPP BRIDGE</div>
+        <h1 class="oc-page__title">@L["whatsapp.title"]</h1>
+        <div class="oc-page__sub">@L["whatsapp.setup"] · @L["whatsapp.authStatus"]</div>
+    </header>
+
+    <div class="oc-wa-grid">
+        <MudPaper Class="oc-panel oc-panel--setup" Elevation="0">
+            <div class="oc-panel__head">
+                <span class="oc-kicker oc-kicker--accent">A · SETUP</span>
+                <span class="oc-panel__title">@L["whatsapp.setup"]</span>
+                <MudSpacer />
+                <MudSwitch T="bool" @bind-Value="_enabled"
+                           Color="Color.Success"
+                           Label="@L["common.enable"]" />
+            </div>
+            <div class="oc-panel__body">
+                @if (_loading)
+                {
+                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-2" />
+                }
+                else
+                {
+                    <MudSelect T="string" @bind-Value="_type"
+                               Label="@L["whatsapp.connectionType"]"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense">
+                        <MudSelectItem Value="@("cloud")">@L["whatsapp.cloud"]</MudSelectItem>
+                        <MudSelectItem Value="@("multidevice")">@L["whatsapp.multidevice"]</MudSelectItem>
+                    </MudSelect>
+
+                    <MudTextField T="string" @bind-Value="_webhookPath"
+                                  Label="@L["whatsapp.webhookPath"]"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Webhook" />
+
+                    <MudTextField T="string" @bind-Value="_phoneNumberId"
+                                  Label="@L["whatsapp.phoneNumberId"]"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" />
+
+                    <MudTextField T="string" @bind-Value="_businessAccountId"
+                                  Label="@L["whatsapp.businessAccountId"]"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" />
+
+                    <MudTextField T="string" @bind-Value="_accessToken"
+                                  Label="@L["whatsapp.accessToken"]"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  InputType="InputType.Password"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Key" />
+
+                    <MudTextField T="string" @bind-Value="_verifyToken"
+                                  Label="@L["whatsapp.verifyToken"]"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  InputType="InputType.Password"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.VerifiedUser" />
+
+                    <div class="oc-actionbar">
+                        <MudSpacer />
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Save"
+                                   OnClick="SaveSetup"
+                                   Disabled="_saving">
+                            @if (_saving)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            }
+                            @L["common.save"]
+                        </MudButton>
+                    </div>
+                }
+            </div>
+        </MudPaper>
+
+        <MudPaper Class="oc-panel oc-panel--auth" Elevation="0">
+            <div class="oc-panel__head">
+                <span class="oc-kicker oc-kicker--accent">B · LIVE AUTH</span>
+                <span class="oc-panel__title">@L["whatsapp.authStatus"]</span>
+                <MudSpacer />
+                <span class="oc-link-indicator @(_sseConnected ? "oc-link-indicator--on" : "")"></span>
+                <span class="oc-kicker">@(_sseConnected ? "SSE / LIVE" : "SSE / OFF")</span>
+            </div>
+            <div class="oc-panel__body oc-auth-body">
+                <div class="oc-auth-status">
+                    <MudChip T="string"
+                             Size="Size.Large"
+                             Variant="Variant.Filled"
+                             Color="@StateColor(_authState?.State)"
+                             Icon="@StateIcon(_authState?.State)">
+                        @StateLabel(_authState?.State)
+                    </MudChip>
+                    @if (!string.IsNullOrEmpty(_authState?.AccountId))
+                    {
+                        <span class="oc-mono oc-auth-account">@_authState!.AccountId</span>
+                    }
+                </div>
+
+                <div class="oc-auth-canvas @(IsQrState ? "oc-auth-canvas--qr" : "")">
+                    @if (IsQrState)
+                    {
+                        <div class="oc-qr-frame">
+                            <MudImage Src="/admin/channels/whatsapp/auth/qr.svg"
+                                      Alt="WhatsApp QR Code"
+                                      Class="oc-qr-image"
+                                      ObjectFit="ObjectFit.Contain"
+                                      Fluid="true" />
+                            <div class="oc-qr-instructions">
+                                <span class="oc-kicker oc-kicker--accent">SCAN</span>
+                                <p>@L["whatsapp.scanQrCode"]</p>
+                            </div>
+                        </div>
+                    }
+                    else if (_authState?.State?.ToLowerInvariant() == "connected")
+                    {
+                        <div class="oc-auth-glyph oc-auth-glyph--ok">
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Large" />
+                            <span>@L["whatsapp.connected"]</span>
+                        </div>
+                    }
+                    else if (_authState?.State?.ToLowerInvariant() == "initializing")
+                    {
+                        <div class="oc-auth-glyph oc-auth-glyph--info">
+                            <MudProgressCircular Indeterminate="true" Size="Size.Large" />
+                            <span>@L["whatsapp.initializing"]</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="oc-auth-glyph oc-auth-glyph--off">
+                            <MudIcon Icon="@Icons.Material.Filled.PowerOff" Size="Size.Large" />
+                            <span>@L["whatsapp.disconnected"]</span>
+                        </div>
+                    }
+                </div>
+
+                <div class="oc-actionbar">
+                    <MudSpacer />
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Warning"
+                               StartIcon="@Icons.Material.Filled.RestartAlt"
+                               OnClick="RestartAuth">
+                        @L["whatsapp.restartAuth"]
+                    </MudButton>
+                </div>
+            </div>
+        </MudPaper>
+    </div>
+</div>
+
+<style>
+    .oc-page { max-width: 1280px; margin: 0 auto; }
+    .oc-page__head { padding: 0 0 1.5rem 0; border-bottom: 1px solid var(--mud-palette-lines-default); margin-bottom: 1.5rem; }
+    .oc-page__title { font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; margin: 0.25rem 0 0; }
+    .oc-page__sub { color: var(--mud-palette-text-secondary); font-size: 0.9rem; margin-top: 0.25rem; }
+    .oc-kicker { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--mud-palette-text-secondary); }
+    .oc-kicker--accent { color: var(--mud-palette-primary); }
+
+    .oc-wa-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1rem; }
+    @@media (max-width: 960px) { .oc-wa-grid { grid-template-columns: 1fr; } }
+
+    .oc-panel { border: 1px solid var(--mud-palette-lines-default); border-radius: 4px; overflow: hidden; background: var(--mud-palette-surface); }
+    .oc-panel__head { display: flex; align-items: center; gap: 0.75rem; padding: 0.85rem 1.1rem; border-bottom: 1px solid var(--mud-palette-lines-default); }
+    .oc-panel--setup .oc-panel__head { background: linear-gradient(180deg, rgba(139,92,246,0.05), transparent); }
+    .oc-panel--auth .oc-panel__head { background: linear-gradient(180deg, rgba(37,211,102,0.06), transparent); }
+    .oc-panel__title { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+    .oc-panel__body { padding: 1.1rem; display: flex; flex-direction: column; gap: 1rem; }
+
+    .oc-actionbar { display: flex; align-items: center; gap: 0.5rem; }
+
+    .oc-link-indicator { width: 8px; height: 8px; border-radius: 50%; background: var(--mud-palette-action-default); box-shadow: 0 0 0 0 transparent; transition: background-color .25s, box-shadow .25s; }
+    .oc-link-indicator--on { background: #25D366; box-shadow: 0 0 0 4px rgba(37,211,102,0.18); animation: oc-pulse 2s ease-in-out infinite; }
+    @@keyframes oc-pulse { 0%,100% { box-shadow: 0 0 0 4px rgba(37,211,102,0.18); } 50% { box-shadow: 0 0 0 8px rgba(37,211,102,0.06); } }
+
+    .oc-auth-body { gap: 1.25rem; }
+    .oc-auth-status { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .oc-auth-account { color: var(--mud-palette-text-secondary); font-size: 0.85rem; }
+
+    .oc-auth-canvas { display: flex; align-items: center; justify-content: center; min-height: 280px; border: 1px dashed var(--mud-palette-lines-default); border-radius: 4px; padding: 1.5rem; background: repeating-linear-gradient(0deg, transparent, transparent 22px, rgba(148,163,184,0.04) 22px, rgba(148,163,184,0.04) 23px); }
+    .oc-auth-canvas--qr { background: #ffffff; border-color: #25D366; }
+
+    .oc-qr-frame { display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap; justify-content: center; }
+    .oc-qr-image { width: 220px; height: 220px; background: #ffffff; padding: 12px; border: 2px solid #25D366; border-radius: 8px; }
+    .oc-qr-instructions { max-width: 220px; color: #0f172a; }
+    .oc-qr-instructions p { margin: 0.4rem 0 0; font-size: 0.95rem; line-height: 1.5; }
+
+    .oc-auth-glyph { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; color: var(--mud-palette-text-secondary); font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; letter-spacing: 0.12em; text-transform: uppercase; }
+    .oc-auth-glyph--ok { color: var(--mud-palette-success); }
+    .oc-auth-glyph--off { color: var(--mud-palette-error); }
+    .oc-auth-glyph--info { color: var(--mud-palette-info); }
+
+    .oc-mono { font-family: 'JetBrains Mono', Consolas, monospace; }
+</style>
+
+@code {
+    private bool _enabled;
+    private string _type = "cloud";
+    private string _webhookPath = string.Empty;
+    private string _phoneNumberId = string.Empty;
+    private string _businessAccountId = string.Empty;
+    private string _accessToken = string.Empty;
+    private string _verifyToken = string.Empty;
+
+    private WhatsAppAuthState? _authState;
+    private bool _sseConnected;
+    private bool _loading = true;
+    private bool _saving;
+
+    private bool IsQrState => string.Equals(_authState?.State, "qr_code", StringComparison.OrdinalIgnoreCase)
+                              || string.Equals(_authState?.State, "qr", StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+
+        if (!Auth.HasRole("operator"))
+        {
+            return;
+        }
+
+        await LoadSetup();
+        _ = StartAuthStream();
+    }
+
+    private async Task LoadSetup()
+    {
+        _loading = true;
+        try
+        {
+            using var response = await Api.GetRawAsync("/admin/channels/whatsapp/setup");
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+            var root = doc.RootElement;
+
+            _enabled = TryGetBool(root, "enabled") ?? false;
+            _type = TryGetString(root, "type") ?? "cloud";
+            _webhookPath = TryGetString(root, "webhookPath") ?? string.Empty;
+            _phoneNumberId = TryGetString(root, "phoneNumberId") ?? string.Empty;
+            _businessAccountId = TryGetString(root, "businessAccountId") ?? string.Empty;
+            _accessToken = TryGetString(root, "accessToken") ?? string.Empty;
+            _verifyToken = TryGetString(root, "verifyToken") ?? string.Empty;
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveSetup()
+    {
+        _saving = true;
+        try
+        {
+            using var response = await Api.PutRawAsync("/admin/channels/whatsapp/setup", new
+            {
+                enabled = _enabled,
+                type = _type,
+                webhookPath = _webhookPath,
+                phoneNumberId = _phoneNumberId,
+                businessAccountId = _businessAccountId,
+                accessToken = _accessToken,
+                verifyToken = _verifyToken
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task StartAuthStream()
+    {
+        try
+        {
+            await EventStream.StartAsync(
+                "/admin/channels/whatsapp/auth/stream",
+                HandleAuthEvent,
+                CancellationToken.None);
+            _sseConnected = EventStream.IsConnected;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            _sseConnected = false;
+        }
+    }
+
+    private void HandleAuthEvent(string eventType, string data)
+    {
+        if (!string.Equals(eventType, "whatsapp-auth-state", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(data);
+            var root = doc.RootElement;
+            _authState = new WhatsAppAuthState(
+                TryGetString(root, "channelId"),
+                TryGetString(root, "accountId"),
+                TryGetString(root, "state"),
+                TryGetString(root, "qrCodeUrl")
+            );
+            _sseConnected = true;
+            InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            // ignore malformed event
+        }
+    }
+
+    private async Task RestartAuth()
+    {
+        var confirmed = await DialogService.ShowMessageBoxAsync(
+            L["common.confirm"],
+            L["whatsapp.confirmRestart"],
+            yesText: L["common.confirm"],
+            cancelText: L["common.cancel"]);
+
+        if (confirmed != true) return;
+
+        try
+        {
+            using var response = await Api.PostRawAsync("/admin/channels/whatsapp/restart");
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+    }
+
+    private Color StateColor(string? state) => state?.ToLowerInvariant() switch
+    {
+        "connected" => Color.Success,
+        "qr_code" or "qr" => Color.Warning,
+        "initializing" => Color.Info,
+        "disconnected" => Color.Error,
+        _ => Color.Default
+    };
+
+    private string StateIcon(string? state) => state?.ToLowerInvariant() switch
+    {
+        "connected" => Icons.Material.Filled.CheckCircle,
+        "qr_code" or "qr" => Icons.Material.Filled.QrCode2,
+        "initializing" => Icons.Material.Filled.HourglassTop,
+        "disconnected" => Icons.Material.Filled.LinkOff,
+        _ => Icons.Material.Filled.HelpOutline
+    };
+
+    private string StateLabel(string? state) => state?.ToLowerInvariant() switch
+    {
+        "connected" => L["whatsapp.connected"],
+        "qr_code" or "qr" => L["whatsapp.waitingForQr"],
+        "initializing" => L["whatsapp.initializing"],
+        "disconnected" => L["whatsapp.disconnected"],
+        _ => state ?? L["whatsapp.disconnected"]
+    };
+
+    private static string? TryGetString(System.Text.Json.JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind == System.Text.Json.JsonValueKind.String ? el.GetString() : null;
+    }
+
+    private static bool? TryGetBool(System.Text.Json.JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False => false,
+            _ => null
+        };
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    public async ValueTask DisposeAsync()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+        try
+        {
+            await EventStream.StopAsync();
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+}

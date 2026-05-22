@@ -1,0 +1,637 @@
+@page "/memory"
+@implements IDisposable
+@inject ApiService Api
+@inject AuthService Auth
+@inject LocalizationService L
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+
+<PageTitle>@L["memory.title"] · OpenClaw</PageTitle>
+
+@if (!Auth.HasRole("operator"))
+{
+    <MudPaper Elevation="0" Class="memory-gate pa-6 my-4">
+        <MudIcon Icon="@Icons.Material.Outlined.Lock" Size="Size.Large" Color="Color.Warning" />
+        <MudText Typo="Typo.h6" Class="mt-2">@L["memory.title"]</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">@L["memory.operatorRequired"]</MudText>
+    </MudPaper>
+}
+else
+{
+    <header class="memory-hero">
+        <div class="memory-hero__head">
+            <div>
+                <div class="memory-hero__tag">
+                    <span class="memory-hero__dot"></span>
+                    @L["memory.title"].ToUpperInvariant()
+                </div>
+                <h1 class="memory-hero__title">@L["memory.notes"]</h1>
+                <p class="memory-hero__sub">@L["memory.selectNote"]</p>
+            </div>
+            <div class="memory-hero__actions">
+                <MudButton Variant="Variant.Text"
+                           StartIcon="@Icons.Material.Outlined.FileUpload"
+                           Color="Color.Default"
+                           Disabled="_busy"
+                           OnClick="OpenFilePicker">@L["memory.importMemory"]</MudButton>
+                <MudButton Variant="Variant.Text"
+                           StartIcon="@Icons.Material.Outlined.FileDownload"
+                           Color="Color.Default"
+                           Disabled="_busy"
+                           OnClick="ExportMemory">@L["memory.exportMemory"]</MudButton>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Outlined.Add"
+                           OnClick="StartNewNote">@L["memory.newNote"]</MudButton>
+            </div>
+        </div>
+        <InputFile id="memoryImportInput" OnChange="HandleImportFile" hidden accept=".json,application/json" />
+    </header>
+
+    <MudGrid Spacing="3" Class="mt-4">
+        <MudItem xs="12" md="4">
+            <MudPaper Elevation="0" Class="memory-panel pa-0">
+                <div class="memory-panel__head">
+                    <MudTextField @bind-Value="_searchQuery"
+                                  Placeholder="@L["memory.searchNotes"]"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Outlined.Search"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Immediate="true"
+                                  OnKeyUp="OnSearchKey"
+                                  Class="memory-search" />
+                </div>
+
+                @if (_loading)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                }
+                else
+                {
+                    var visible = FilteredNotes();
+                    @if (visible.Count == 0)
+                    {
+                        <div class="memory-empty">
+                            <MudIcon Icon="@Icons.Material.Outlined.Inbox" Size="Size.Large" />
+                            <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">@L["memory.empty"]</MudText>
+                        </div>
+                    }
+                    else
+                    {
+                        <ul class="memory-list">
+                            @foreach (var note in visible)
+                            {
+                                var active = _selected?.Key == note.Key && !_isNew;
+                                <li class="memory-list__item @(active ? "memory-list__item--active" : null)"
+                                    @onclick="@(() => SelectNote(note))">
+                                    <div class="memory-list__key">@note.Key</div>
+                                    @if (!string.IsNullOrEmpty(note.Content))
+                                    {
+                                        <div class="memory-list__preview">@Preview(note.Content)</div>
+                                    }
+                                    <div class="memory-list__time">@FormatTime(note.UpdatedAtUtc)</div>
+                                </li>
+                            }
+                        </ul>
+                    }
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="8">
+            <MudPaper Elevation="0" Class="memory-panel memory-panel--editor pa-0">
+                <div class="memory-panel__head memory-editor__head">
+                    <div>
+                        <span class="memory-panel__chip">
+                            @if (_isNew) { @("DRAFT") } else if (_selected is not null) { @("EDIT") } else { @("IDLE") }
+                        </span>
+                        <MudText Typo="Typo.subtitle1" Class="d-inline ml-2">
+                            @if (_isNew) { @L["memory.createNote"] } else if (_selected is not null) { @L["memory.editNote"] } else { @L["memory.notes"] }
+                        </MudText>
+                    </div>
+                    @if (_selected is not null && !_isNew)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline"
+                                       Color="Color.Error"
+                                       OnClick="DeleteNote"
+                                       Disabled="_busy" />
+                    }
+                </div>
+
+                @if (!_isNew && _selected is null)
+                {
+                    <div class="memory-empty">
+                        <MudIcon Icon="@Icons.Material.Outlined.AutoStories" Size="Size.Large" />
+                        <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">@L["memory.selectNote"]</MudText>
+                    </div>
+                }
+                else
+                {
+                    <div class="memory-editor">
+                        <MudTextField @bind-Value="_editKey"
+                                      Label="@L["memory.noteKey"]"
+                                      Placeholder="@L["memory.keyPlaceholder"]"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      ReadOnly="@(!_isNew)"
+                                      HelperText="@(_isNew ? null : L["memory.noteKey"])" />
+
+                        <MudTextField @bind-Value="_editContent"
+                                      Label="@L["memory.noteContent"]"
+                                      Placeholder="@L["memory.contentPlaceholder"]"
+                                      Variant="Variant.Outlined"
+                                      Lines="16"
+                                      Class="memory-editor__content mt-3" />
+
+                        <div class="memory-editor__footer">
+                            <MudButton Variant="Variant.Text"
+                                       Color="Color.Default"
+                                       OnClick="CancelEdit"
+                                       Disabled="_busy">@L["common.cancel"]</MudButton>
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Outlined.Save"
+                                       OnClick="SaveNote"
+                                       Disabled="_busy || string.IsNullOrWhiteSpace(_editKey)">@L["common.save"]</MudButton>
+                        </div>
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+<style>
+    .memory-gate {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        text-align: center;
+    }
+
+    .memory-hero {
+        padding: var(--gap-6) var(--gap-5);
+        background:
+            radial-gradient(120% 200% at 100% 0%, rgba(99, 102, 241, 0.20), transparent 55%),
+            linear-gradient(180deg, var(--bg-elevated) 0%, var(--panel-strong) 100%);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+    }
+    .memory-hero__head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: var(--gap-4);
+    }
+    .memory-hero__tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        color: var(--muted);
+        text-transform: uppercase;
+    }
+    .memory-hero__dot {
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: var(--accent-cool);
+        box-shadow: 0 0 12px rgba(99, 102, 241, 0.55);
+    }
+    .memory-hero__title {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: clamp(28px, 3vw, 40px);
+        margin: 10px 0 6px;
+        color: var(--text-strong);
+        line-height: 1.05;
+    }
+    .memory-hero__sub {
+        margin: 0;
+        max-width: 620px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+    }
+    .memory-hero__actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .memory-panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        min-height: 420px;
+    }
+    .memory-panel--editor {
+        background:
+            linear-gradient(180deg, rgba(99, 102, 241, 0.06) 0%, transparent 80px),
+            var(--panel);
+    }
+    .memory-panel__head {
+        padding: 14px 14px 10px;
+        border-bottom: 1px solid var(--border-soft);
+    }
+    .memory-editor__head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+    .memory-panel__chip {
+        display: inline-block;
+        padding: 3px 8px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.22em;
+        color: var(--accent-hot);
+        background: rgba(139, 92, 246, 0.08);
+        border: 1px solid rgba(139, 92, 246, 0.32);
+        border-radius: 4px;
+    }
+    .memory-search { width: 100%; }
+
+    .memory-empty {
+        padding: 56px 24px;
+        text-align: center;
+        color: var(--muted);
+    }
+
+    .memory-list {
+        list-style: none;
+        padding: 6px;
+        margin: 0;
+        max-height: 540px;
+        overflow-y: auto;
+    }
+    .memory-list__item {
+        padding: 10px 12px;
+        margin: 4px 2px;
+        border-radius: var(--radius-sm);
+        border: 1px solid transparent;
+        cursor: pointer;
+        transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 160ms var(--ease-out);
+    }
+    .memory-list__item:hover {
+        background: rgba(255, 255, 255, 0.035);
+        border-color: var(--border-soft);
+    }
+    .memory-list__item--active {
+        background: rgba(139, 92, 246, 0.10);
+        border-color: rgba(139, 92, 246, 0.45);
+        box-shadow: var(--shadow-halo);
+    }
+    .memory-list__key {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--text-strong);
+        word-break: break-all;
+    }
+    .memory-list__preview {
+        margin-top: 4px;
+        font-size: 12.5px;
+        color: var(--muted);
+        line-height: 1.4;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+    }
+    .memory-list__time {
+        margin-top: 6px;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.08em;
+        color: var(--muted-soft);
+    }
+
+    .memory-editor {
+        padding: 18px 18px 22px;
+    }
+    .memory-editor__content textarea {
+        font-family: var(--font-mono) !important;
+        font-size: 13.5px !important;
+        line-height: 1.6 !important;
+    }
+    .memory-editor__footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px dashed var(--border-soft);
+    }
+</style>
+
+@code {
+    private List<MemoryNote>? _notes;
+    private MemoryNote? _selected;
+    private string _searchQuery = string.Empty;
+    private string _editKey = string.Empty;
+    private string _editContent = string.Empty;
+    private bool _isNew;
+    private bool _loading = true;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleStateChanged;
+        Auth.OnAuthStateChanged += HandleStateChanged;
+
+        if (Auth.HasRole("operator"))
+        {
+            await LoadNotes();
+        }
+        else
+        {
+            _loading = false;
+        }
+    }
+
+    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task LoadNotes()
+    {
+        _loading = true;
+        try
+        {
+            var list = await Api.GetAsync<MemoryNoteListResponse>("admin/memory/notes");
+            _notes = list?.Items?.ToList() ?? new List<MemoryNote>();
+
+            if (_selected is not null)
+            {
+                _selected = _notes.FirstOrDefault(n => n.Key == _selected.Key);
+                if (_selected is not null && !_isNew)
+                {
+                    _editKey = _selected.Key;
+                    _editContent = _selected.Content ?? string.Empty;
+                }
+            }
+        }
+        catch
+        {
+            _notes = new List<MemoryNote>();
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private List<MemoryNote> FilteredNotes()
+    {
+        if (_notes is null) return new List<MemoryNote>();
+        if (string.IsNullOrWhiteSpace(_searchQuery)) return _notes;
+
+        var q = _searchQuery.Trim();
+        return _notes.Where(n =>
+            (n.Key?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+            (n.Content?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
+            .ToList();
+    }
+
+    private void OnSearchKey(KeyboardEventArgs args)
+    {
+        // Filtering is reactive via _searchQuery; this is a placeholder for Enter to load.
+    }
+
+    private async Task SelectNote(MemoryNote note)
+    {
+        _isNew = false;
+        _selected = note;
+        _editKey = note.Key;
+        _editContent = note.Content ?? string.Empty;
+
+        // If list payload lacked full content, lazy-load it.
+        if (string.IsNullOrEmpty(note.Content))
+        {
+            try
+            {
+                var full = await Api.GetAsync<MemoryNoteDetailResponse>($"admin/memory/notes/{Uri.EscapeDataString(note.Key)}");
+                if (full?.Note is not null)
+                {
+                    _selected = full.Note;
+                    _editContent = full.Note.Content ?? string.Empty;
+                }
+            }
+            catch
+            {
+                // Keep current preview; not fatal.
+            }
+        }
+    }
+
+    private void StartNewNote()
+    {
+        _isNew = true;
+        _selected = null;
+        _editKey = string.Empty;
+        _editContent = string.Empty;
+    }
+
+    private void CancelEdit()
+    {
+        if (_isNew)
+        {
+            _isNew = false;
+            _editKey = string.Empty;
+            _editContent = string.Empty;
+        }
+        else if (_selected is not null)
+        {
+            _editKey = _selected.Key;
+            _editContent = _selected.Content ?? string.Empty;
+        }
+    }
+
+    private async Task SaveNote()
+    {
+        if (string.IsNullOrWhiteSpace(_editKey))
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var body = new { key = _editKey.Trim(), content = _editContent };
+            using var response = await Api.PostRawAsync("admin/memory/notes", body);
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+                _isNew = false;
+                await LoadNotes();
+                _selected = _notes?.FirstOrDefault(n => n.Key == _editKey.Trim());
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteNote()
+    {
+        if (_selected is null || string.IsNullOrEmpty(_selected.Key))
+        {
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBoxAsync(
+            L["common.confirm"],
+            L["memory.confirmDelete"],
+            yesText: L["common.delete"],
+            cancelText: L["common.cancel"]);
+
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            using var response = await Api.DeleteAsync($"admin/memory/notes/{Uri.EscapeDataString(_selected.Key)}");
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+                _selected = null;
+                _editKey = string.Empty;
+                _editContent = string.Empty;
+                await LoadNotes();
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OpenFilePicker()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("openclawDashboard.clickElementById", "memoryImportInput");
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private async Task HandleImportFile(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null) return;
+
+        _busy = true;
+        try
+        {
+            // Cap import at 16 MB to keep WASM memory predictable.
+            const long MaxBytes = 16L * 1024 * 1024;
+            await using var stream = file.OpenReadStream(MaxBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+
+            var content = new ByteArrayContent(ms.ToArray());
+            content.Headers.ContentType =
+                new System.Net.Http.Headers.MediaTypeHeaderValue(
+                    string.IsNullOrEmpty(file.ContentType) ? "application/json" : file.ContentType);
+
+            using var response = await Api.PostContentAsync("admin/memory/import", content);
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["memory.importSuccess"], Severity.Success);
+                await LoadNotes();
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ExportMemory()
+    {
+        _busy = true;
+        try
+        {
+            using var response = await Api.GetRawAsync("admin/memory/export");
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+                return;
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            if (bytes.Length == 0)
+            {
+                Snackbar.Add(L["memory.exportEmpty"], Severity.Warning);
+                return;
+            }
+
+            var base64 = Convert.ToBase64String(bytes);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
+            var fileName = $"openclaw-memory-{DateTime.UtcNow:yyyyMMddHHmmss}.json";
+
+            await JS.InvokeVoidAsync("openclawDownload", fileName, contentType, base64);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string Preview(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return string.Empty;
+        var trimmed = content.Trim().Replace('\n', ' ').Replace('\r', ' ');
+        return trimmed.Length <= 120 ? trimmed : trimmed[..120] + "…";
+    }
+
+    private static string FormatTime(DateTimeOffset value)
+        => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleStateChanged;
+        Auth.OnAuthStateChanged -= HandleStateChanged;
+    }
+}

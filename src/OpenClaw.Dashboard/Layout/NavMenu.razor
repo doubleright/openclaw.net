@@ -1,0 +1,90 @@
+@implements IDisposable
+@inject LocalizationService L
+@inject AuthService Auth
+
+<MudNavMenu>
+    <MudNavLink Href="" Match="NavLinkMatch.All"
+                Icon="@Icons.Material.Filled.Dashboard">
+        @L["nav.overview"]
+    </MudNavLink>
+
+    @if (Auth.HasRole("admin"))
+    {
+        <MudNavLink Href="governance" Icon="@Icons.Material.Filled.AdminPanelSettings">
+            @L["nav.governance"]
+        </MudNavLink>
+    }
+
+    <MudNavLink Href="observability" Icon="@Icons.Material.Filled.Analytics">
+        @L["nav.observability"]
+    </MudNavLink>
+
+    <MudNavLink Href="migration" Icon="@Icons.Material.Filled.MoveUp">
+        @L["nav.migration"]
+    </MudNavLink>
+
+    <MudNavLink Href="integration" Icon="@Icons.Material.Filled.IntegrationInstructions">
+        @L["nav.integration"]
+    </MudNavLink>
+
+    @if (Auth.HasRole("operator"))
+    {
+        <MudNavLink Href="heartbeat" Icon="@Icons.Material.Filled.FavoriteBorder">
+            @L["nav.heartbeat"]
+        </MudNavLink>
+
+        <MudNavLink Href="automation" Icon="@Icons.Material.Filled.AutoMode">
+            @L["nav.automation"]
+        </MudNavLink>
+
+        <MudNavLink Href="learning" Icon="@Icons.Material.Filled.School">
+            @L["nav.learning"]
+        </MudNavLink>
+
+        <MudNavLink Href="memory" Icon="@Icons.Material.Filled.Memory">
+            @L["nav.memory"]
+        </MudNavLink>
+
+        <MudNavLink Href="ops" Icon="@Icons.Material.Filled.Build">
+            @L["nav.ops"]
+        </MudNavLink>
+    }
+
+    <MudNavLink Href="sessions" Icon="@Icons.Material.Filled.Chat">
+        @L["nav.sessions"]
+    </MudNavLink>
+
+    @if (Auth.HasRole("admin"))
+    {
+        <MudNavLink Href="settings" Icon="@Icons.Material.Filled.Settings">
+            @L["nav.settings"]
+        </MudNavLink>
+    }
+
+    @if (Auth.HasRole("operator"))
+    {
+        <MudNavLink Href="channels" Icon="@Icons.Material.Filled.Hub">
+            @L["nav.channels"]
+        </MudNavLink>
+
+        <MudNavLink Href="whatsapp" Icon="@Icons.Custom.Brands.WhatsApp">
+            @L["nav.whatsapp"]
+        </MudNavLink>
+    }
+</MudNavMenu>
+
+@code {
+    protected override void OnInitialized()
+    {
+        L.OnLanguageChanged += HandleStateChanged;
+        Auth.OnAuthStateChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleStateChanged;
+        Auth.OnAuthStateChanged -= HandleStateChanged;
+    }
+}

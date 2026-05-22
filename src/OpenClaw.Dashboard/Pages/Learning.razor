@@ -1,0 +1,603 @@
+@page "/learning"
+@implements IDisposable
+@inject ApiService Api
+@inject AuthService Auth
+@inject LocalizationService L
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@using System.Text.Json
+
+<PageTitle>@L["learning.title"] · OpenClaw</PageTitle>
+
+@if (!Auth.HasRole("operator"))
+{
+    <MudPaper Elevation="0" Class="learning-gate pa-6 my-4">
+        <MudIcon Icon="@Icons.Material.Outlined.Lock" Size="Size.Large" Color="Color.Warning" />
+        <MudText Typo="Typo.h6" Class="mt-2">@L["learning.title"]</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">@L["learning.operatorRequired"]</MudText>
+    </MudPaper>
+}
+else
+{
+    <header class="learning-hero">
+        <div class="learning-hero__rail" aria-hidden="true">
+            <span></span><span></span><span></span>
+        </div>
+        <div class="learning-hero__body">
+            <div class="learning-hero__tag">
+                <span class="learning-hero__dot"></span>
+                @L["learning.title"].ToUpperInvariant()
+            </div>
+            <h1 class="learning-hero__title">@L["learning.proposals"]</h1>
+            <p class="learning-hero__sub">@L["learning.selectProposal"]</p>
+        </div>
+        <div class="learning-hero__meta">
+            <div class="learning-hero__stat">
+                <span class="learning-hero__stat-num">@(_proposals?.Count ?? 0)</span>
+                <span class="learning-hero__stat-lbl">@L["learning.proposals"]</span>
+            </div>
+            <MudTooltip Text="@L["common.refresh"]" Placement="Placement.Bottom">
+                <MudIconButton Icon="@Icons.Material.Outlined.Refresh"
+                               Color="Color.Inherit"
+                               OnClick="LoadProposals"
+                               Disabled="_loading" />
+            </MudTooltip>
+        </div>
+    </header>
+
+    <MudGrid Spacing="3" Class="mt-4 learning-grid">
+        <MudItem xs="12" lg="7">
+            <MudPaper Elevation="0" Class="learning-panel pa-0">
+                <div class="learning-panel__head">
+                    <span class="learning-panel__chip">LEDGER</span>
+                    <MudText Typo="Typo.subtitle1">@L["learning.proposals"]</MudText>
+                </div>
+                @if (_loading)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="learning-panel__loader" />
+                }
+                else if (_proposals is null || _proposals.Count == 0)
+                {
+                    <div class="learning-empty">
+                        <MudIcon Icon="@Icons.Material.Outlined.Inbox" Size="Size.Large" />
+                        <MudText Typo="Typo.body1" Class="mt-2">@L["learning.empty"]</MudText>
+                    </div>
+                }
+                else
+                {
+                    <MudDataGrid T="LearningProposal"
+                                 Items="@_proposals"
+                                 Dense="true"
+                                 Hover="true"
+                                 Bordered="false"
+                                 Elevation="0"
+                                 RowClick="@OnRowClick"
+                                 SelectedItem="@_selected"
+                                 Class="learning-grid__table">
+                        <Columns>
+                            <TemplateColumn Title="ID" SortBy="@(x => x.Id)">
+                                <CellTemplate>
+                                    <span class="learning-id">@Truncate(context.Item.Id, 10)</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <PropertyColumn Property="p => p.Kind" Title="@L["learning.proposalType"]" />
+                            <TemplateColumn Title="@L["learning.proposalStatus"]" SortBy="@(x => x.Status)">
+                                <CellTemplate>
+                                    <span class="learning-status learning-status--@(StatusKey(context.Item.Status))">
+                                        <span class="learning-status__dot"></span>
+                                        @StatusLabel(context.Item.Status)
+                                    </span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <PropertyColumn Property="p => p.Summary" Title="@L["learning.summary"]" />
+                            <TemplateColumn Title="@L["learning.createdAt"]" SortBy="@(x => x.CreatedAtUtc)">
+                                <CellTemplate>
+                                    <span class="learning-time">@FormatTime(context.Item.CreatedAtUtc)</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                        </Columns>
+                    </MudDataGrid>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="5">
+            <MudPaper Elevation="0" Class="learning-panel learning-panel--dossier pa-0">
+                <div class="learning-panel__head">
+                    <span class="learning-panel__chip learning-panel__chip--accent">DOSSIER</span>
+                    <MudText Typo="Typo.subtitle1">@L["learning.proposalDetail"]</MudText>
+                </div>
+                @if (_selected is null)
+                {
+                    <div class="learning-empty">
+                        <MudIcon Icon="@Icons.Material.Outlined.TouchApp" Size="Size.Large" />
+                        <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">@L["learning.selectProposal"]</MudText>
+                    </div>
+                }
+                else
+                {
+                    <div class="learning-dossier">
+                        <div class="learning-dossier__row">
+                            <span class="learning-dossier__label">ID</span>
+                            <span class="learning-id learning-id--lg">@_selected.Id</span>
+                        </div>
+                        <div class="learning-dossier__row learning-dossier__row--split">
+                            <div>
+                                <span class="learning-dossier__label">@L["learning.proposalType"]</span>
+                                <span class="learning-dossier__value">@(_selected.Kind ?? "—")</span>
+                            </div>
+                            <div>
+                                <span class="learning-dossier__label">@L["learning.proposalStatus"]</span>
+                                <span class="learning-status learning-status--@(StatusKey(_selected.Status))">
+                                    <span class="learning-status__dot"></span>
+                                    @StatusLabel(_selected.Status)
+                                </span>
+                            </div>
+                            <div>
+                                <span class="learning-dossier__label">@L["learning.createdAt"]</span>
+                                <span class="learning-dossier__value">@FormatTime(_selected.CreatedAtUtc)</span>
+                            </div>
+                        </div>
+
+                        <div class="learning-dossier__section">
+                            <span class="learning-dossier__label">@L["learning.summary"]</span>
+                            <p class="learning-dossier__summary">@(_selected.Summary ?? "—")</p>
+                        </div>
+
+                        <div class="learning-dossier__section">
+                            <span class="learning-dossier__label">@L["learning.diff"]</span>
+                            <pre class="learning-diff"><code>@RenderProposalChanges()</code></pre>
+                        </div>
+
+                        <div class="learning-dossier__actions">
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Success"
+                                       StartIcon="@Icons.Material.Outlined.CheckCircle"
+                                       Disabled="@(_busy || !CanApproveOrReject)"
+                                       OnClick="ApproveProposal">@L["common.approve"]</MudButton>
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Error"
+                                       StartIcon="@Icons.Material.Outlined.Cancel"
+                                       Disabled="@(_busy || !CanApproveOrReject)"
+                                       OnClick="RejectProposal">@L["common.reject"]</MudButton>
+                            <MudButton Variant="Variant.Text"
+                                       Color="Color.Warning"
+                                       StartIcon="@Icons.Material.Outlined.Undo"
+                                       Disabled="@(_busy || !CanRollback)"
+                                       OnClick="RollbackProposal">@L["common.rollback"]</MudButton>
+                        </div>
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+<style>
+    .learning-gate {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        text-align: center;
+    }
+
+    .learning-hero {
+        position: relative;
+        display: grid;
+        grid-template-columns: 6px 1fr auto;
+        gap: var(--gap-5);
+        padding: var(--gap-6) var(--gap-5);
+        background:
+            radial-gradient(120% 200% at 0% 0%, rgba(139, 92, 246, 0.18), transparent 55%),
+            linear-gradient(180deg, var(--bg-elevated) 0%, var(--panel-strong) 100%);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+    }
+    .learning-hero__rail { position: relative; }
+    .learning-hero__rail span {
+        display: block;
+        width: 4px;
+        margin: 6px 0;
+        background: var(--accent);
+        border-radius: 2px;
+        opacity: 0.85;
+    }
+    .learning-hero__rail span:nth-child(1) { height: 28px; }
+    .learning-hero__rail span:nth-child(2) { height: 14px; opacity: 0.55; }
+    .learning-hero__rail span:nth-child(3) { height: 8px; opacity: 0.3; }
+    .learning-hero__tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        color: var(--muted);
+        text-transform: uppercase;
+    }
+    .learning-hero__dot {
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .learning-hero__title {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: clamp(28px, 3vw, 40px);
+        line-height: 1.05;
+        margin: 10px 0 6px;
+        color: var(--text-strong);
+    }
+    .learning-hero__sub {
+        margin: 0;
+        max-width: 560px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+    }
+    .learning-hero__meta {
+        display: flex;
+        align-items: center;
+        gap: var(--gap-3);
+    }
+    .learning-hero__stat {
+        text-align: right;
+        padding: 10px 16px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-md);
+        min-width: 92px;
+    }
+    .learning-hero__stat-num {
+        display: block;
+        font-family: var(--font-display);
+        font-size: 28px;
+        line-height: 1;
+        color: var(--text-strong);
+        font-weight: 700;
+    }
+    .learning-hero__stat-lbl {
+        display: block;
+        margin-top: 4px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+
+    .learning-panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+    }
+    .learning-panel--dossier {
+        background:
+            linear-gradient(180deg, rgba(139, 92, 246, 0.08) 0%, transparent 80px),
+            var(--panel);
+    }
+    .learning-panel__head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border-soft);
+    }
+    .learning-panel__chip {
+        display: inline-block;
+        padding: 3px 8px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.22em;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border-soft);
+        border-radius: 4px;
+    }
+    .learning-panel__chip--accent {
+        color: var(--accent-hot);
+        border-color: rgba(139, 92, 246, 0.35);
+        background: rgba(139, 92, 246, 0.08);
+    }
+    .learning-panel__loader { border-radius: 0; }
+    .learning-empty {
+        padding: 56px 24px;
+        text-align: center;
+        color: var(--muted);
+    }
+
+    .learning-id {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--accent-hot);
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(139, 92, 246, 0.08);
+        border: 1px solid rgba(139, 92, 246, 0.18);
+    }
+    .learning-id--lg { font-size: 13px; padding: 4px 10px; }
+    .learning-time {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--muted);
+    }
+
+    .learning-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-family: var(--font-mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border: 1px solid var(--border-soft);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+    }
+    .learning-status__dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 8px currentColor;
+    }
+    .learning-status--pending { color: var(--signal-warn); border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.08); }
+    .learning-status--approved { color: var(--signal-ok); border-color: rgba(52, 211, 153, 0.35); background: rgba(52, 211, 153, 0.08); }
+    .learning-status--rejected { color: var(--signal-err); border-color: rgba(248, 113, 113, 0.35); background: rgba(248, 113, 113, 0.08); }
+
+    .learning-dossier { padding: 20px 22px 22px; }
+    .learning-dossier__row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .learning-dossier__row--split {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+    }
+    .learning-dossier__label {
+        display: block;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 4px;
+    }
+    .learning-dossier__value {
+        color: var(--text);
+        font-size: 14px;
+    }
+    .learning-dossier__section { margin-top: 18px; }
+    .learning-dossier__summary {
+        margin: 4px 0 0;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.025);
+        border-left: 2px solid var(--accent);
+        border-radius: 4px;
+        color: var(--text);
+        font-size: 14px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+    }
+    .learning-diff {
+        margin: 6px 0 0;
+        padding: 14px;
+        max-height: 360px;
+        overflow: auto;
+        background: var(--bg-deep);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-sm);
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--text);
+        white-space: pre;
+    }
+    .learning-dossier__actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px dashed var(--border-soft);
+    }
+</style>
+
+@code {
+    private List<LearningProposal>? _proposals;
+    private LearningProposal? _selected;
+    private LearningProposalDetailResponse? _selectedDetail;
+    private bool _loading = true;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleStateChanged;
+        Auth.OnAuthStateChanged += HandleStateChanged;
+
+        if (Auth.HasRole("operator"))
+        {
+            await LoadProposals();
+        }
+        else
+        {
+            _loading = false;
+        }
+    }
+
+    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task LoadProposals()
+    {
+        _loading = true;
+        try
+        {
+            var response = await Api.GetAsync<LearningProposalListResponse>("admin/learning/proposals");
+            _proposals = response?.Items ?? new List<LearningProposal>();
+
+            // Re-attach selection by id when possible to survive reloads.
+            if (_selected is not null)
+            {
+                _selected = _proposals.FirstOrDefault(p => p.Id == _selected.Id);
+            }
+        }
+        catch
+        {
+            _proposals = new List<LearningProposal>();
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnRowClick(DataGridRowClickEventArgs<LearningProposal> args)
+    {
+        _selected = args.Item;
+        _selectedDetail = null;
+
+        if (string.IsNullOrEmpty(_selected.Id))
+        {
+            return;
+        }
+
+        try
+        {
+            var detail = await Api.GetAsync<LearningProposalDetailResponse>($"admin/learning/proposals/{Uri.EscapeDataString(_selected.Id)}");
+            if (detail?.Proposal is not null)
+            {
+                _selectedDetail = detail;
+                _selected = detail.Proposal;
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private bool CanApproveOrReject => string.Equals(_selected?.Status, "pending", StringComparison.OrdinalIgnoreCase);
+
+    private bool CanRollback => _selectedDetail?.CanRollback == true;
+
+    private Task ApproveProposal()
+        => InvokeAction("approve", "learning.confirmApprove", "common.approve");
+
+    private Task RejectProposal()
+        => InvokeAction("reject", "learning.confirmReject", "common.reject");
+
+    private Task RollbackProposal()
+        => InvokeAction("rollback", "learning.confirmRollback", "common.rollback");
+
+    private async Task InvokeAction(string action, string confirmKey, string yesKey)
+    {
+        if (_selected is null || string.IsNullOrEmpty(_selected.Id))
+        {
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBoxAsync(
+            L["common.confirm"],
+            L[confirmKey],
+            yesText: L[yesKey],
+            cancelText: L["common.cancel"]);
+
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            using var response = await Api.PostRawAsync($"admin/learning/proposals/{_selected.Id}/{action}");
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+                await LoadProposals();
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private string RenderProposalChanges()
+    {
+        if (_selectedDetail?.ProfileDiff is { Count: > 0 } diff)
+        {
+            return string.Join("\n", diff.Select(item =>
+                $"{item.ChangeType ?? "change"} {item.Path ?? "profile"}: {item.Before ?? "∅"} → {item.After ?? "∅"}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(_selected?.DraftContent))
+        {
+            return _selected.DraftContent;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_selected?.DraftPreview))
+        {
+            return _selected.DraftPreview;
+        }
+
+        if (_selected?.AutomationDraft is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } automationDraft)
+        {
+            return FormatJson(automationDraft);
+        }
+
+        if (_selected?.ProfileUpdate is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } profileUpdate)
+        {
+            return FormatJson(profileUpdate);
+        }
+
+        return _selected?.CreatedReason ?? "—";
+    }
+
+    private static string FormatJson(JsonElement value)
+        => JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true });
+
+    private static string Truncate(string? value, int max)
+    {
+        if (string.IsNullOrEmpty(value)) return "—";
+        return value.Length <= max ? value : value[..max] + "…";
+    }
+
+    private static string StatusKey(string? status)
+        => (status ?? string.Empty).ToLowerInvariant() switch
+        {
+            "approved" => "approved",
+            "rejected" => "rejected",
+            "pending" => "pending",
+            _ => "pending"
+        };
+
+    private string StatusLabel(string? status) => StatusKey(status) switch
+    {
+        "approved" => L["learning.approved"],
+        "rejected" => L["learning.rejected"],
+        "pending" => L["learning.pending"],
+        _ => status ?? "—"
+    };
+
+    private static string FormatTime(DateTime? value)
+        => value.HasValue ? value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—";
+
+    private static string FormatTime(DateTimeOffset value)
+        => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleStateChanged;
+        Auth.OnAuthStateChanged -= HandleStateChanged;
+    }
+}

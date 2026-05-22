@@ -1,0 +1,474 @@
+@page "/"
+@implements IDisposable
+@using System.Text.Json
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+
+<PageTitle>@L["overview.title"] · OpenClaw</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+
+    <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-6">
+        <div>
+            <MudText Typo="Typo.overline" Style="letter-spacing: 0.18em; opacity: 0.6;">
+                OPENCLAW · CONTROL PLANE
+            </MudText>
+            <MudText Typo="Typo.h4" Style="font-weight: 600; letter-spacing: -0.02em;">
+                @L["overview.title"]
+            </MudText>
+        </div>
+        <div class="d-flex align-center gap-2">
+            @if (ShowHealthChip)
+            {
+                <MudChip T="string"
+                         Color="@HealthColor"
+                         Variant="Variant.Filled"
+                         Icon="@HealthIcon"
+                         Size="Size.Medium">
+                    @HealthLabel
+                </MudChip>
+            }
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                           Color="Color.Default"
+                           OnClick="LoadData"
+                           Disabled="_loading"
+                           title="@L["common.refresh"]" />
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Color="Color.Primary"
+                           Indeterminate="true"
+                           Class="mb-4"
+                           Rounded="true" />
+        <MudGrid Spacing="3">
+            @for (var i = 0; i < 5; i++)
+            {
+                <MudItem xs="12" sm="6" md="4" lg="@(i < 2 ? 6 : 4)">
+                    <MudPaper Class="pa-4" Elevation="0" Outlined="true">
+                        <MudSkeleton SkeletonType="SkeletonType.Text" Width="40%" />
+                        <MudSkeleton SkeletonType="SkeletonType.Text" Width="70%" Height="40px" Class="mt-2" />
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+    else
+    {
+        <MudGrid Spacing="3">
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                @RenderMetricCard(L["overview.version"],
+                                  StringValue("version") ?? "—",
+                                  Icons.Material.Filled.Verified,
+                                  "#8b5cf6")
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                @RenderMetricCard(L["overview.activeSessions"],
+                                  NumberValue("activeSessions"),
+                                  Icons.Material.Filled.Hub,
+                                  "#0ea5e9")
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                @RenderMetricCard(L["overview.totalRequests"],
+                                  NumberValue("totalRequests"),
+                                  Icons.Material.Filled.SwapHoriz,
+                                  "#f59e0b")
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                @RenderMetricCard(L["overview.memoryUsage"],
+                                  StringValue("memoryUsage") ?? FormatMemory(),
+                                  Icons.Material.Filled.Memory,
+                                  "#22c55e")
+            </MudItem>
+            <MudItem xs="12">
+                @RenderUptimeCard()
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Elevation="0" Outlined="true" Class="pa-5 mt-6" Style="border-radius: 12px;">
+            <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-4">
+                <div class="d-flex align-center gap-3">
+                    <MudIcon Icon="@Icons.Material.Filled.HealthAndSafety"
+                             Color="Color.Primary"
+                             Size="Size.Large" />
+                    <div>
+                        <MudText Typo="Typo.h6" Style="font-weight: 600;">
+                            @L["overview.doctor"]
+                        </MudText>
+                        <MudText Typo="Typo.body2" Style="opacity: 0.7;">
+                            Diagnostic checks across the runtime, channels, and storage layers.
+                        </MudText>
+                    </div>
+                </div>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.PlayArrow"
+                           OnClick="RunDiagnostics"
+                           Disabled="_runningDiagnostics">
+                    @if (_runningDiagnostics)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    }
+                    @L["overview.runDiagnostics"]
+                </MudButton>
+            </div>
+
+            @if (_runningDiagnostics)
+            {
+                <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="mb-3" Rounded="true" />
+            }
+
+            @if (_diagnostics is null || _diagnostics.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info"
+                          Variant="Variant.Outlined"
+                          Icon="@Icons.Material.Filled.Info">
+                    @L["common.noData"]
+                </MudAlert>
+            }
+            else
+            {
+                <MudList T="JsonElement" Dense="true" Class="pa-0">
+                    @foreach (var item in _diagnostics)
+                    {
+                        var name = ReadString(item, "label", "name", "check", "id") ?? "—";
+                        var statusText = ReadString(item, "status", "state") ?? "unknown";
+                        var message = ReadString(item, "summary", "message", "detail", "description") ?? "";
+                        var nextStep = ReadString(item, "nextStep");
+                        var (sev, icon) = MapDiagnosticSeverity(statusText);
+
+                        <MudListItem T="JsonElement" Class="py-3">
+                            <div class="d-flex align-start gap-3 w-100">
+                                <MudIcon Icon="@icon"
+                                         Color="@sev"
+                                         Size="Size.Medium"
+                                         Class="mt-1" />
+                                <div style="flex: 1; min-width: 0;">
+                                    <div class="d-flex align-center justify-space-between flex-wrap gap-2">
+                                        <MudText Typo="Typo.subtitle2" Style="font-weight: 600;">
+                                            @name
+                                        </MudText>
+                                        <MudChip T="string"
+                                                 Color="@sev"
+                                                 Variant="Variant.Outlined"
+                                                 Size="Size.Small">
+                                            @statusText.ToUpperInvariant()
+                                        </MudChip>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(message))
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mt-1" Style="opacity: 0.78;">
+                                            @message
+                                        </MudText>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(nextStep))
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mt-1" Style="opacity: 0.68;">
+                                            @nextStep
+                                        </MudText>
+                                    }
+                                </div>
+                            </div>
+                        </MudListItem>
+                        <MudDivider />
+                    }
+                </MudList>
+            }
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    private JsonElement? _status;
+    private JsonElement? _summary;
+    private List<JsonElement>? _diagnostics;
+    private bool _loading = true;
+    private bool _runningDiagnostics;
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        await LoadData();
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        var statusTask = TryGetJsonAsync("admin/setup/status");
+        var summaryTask = TryGetJsonAsync("admin/observability/summary");
+        await Task.WhenAll(statusTask, summaryTask).ConfigureAwait(false);
+
+        _status = statusTask.Result;
+        _summary = summaryTask.Result;
+
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task RunDiagnostics()
+    {
+        _runningDiagnostics = true;
+        StateHasChanged();
+
+        var doctor = await TryGetJsonAsync("doctor").ConfigureAwait(false);
+        _diagnostics = ExtractDiagnostics(doctor);
+
+        _runningDiagnostics = false;
+        StateHasChanged();
+    }
+
+    private async Task<JsonElement?> TryGetJsonAsync(string url)
+    {
+        try
+        {
+            using var response = await Api.GetRawAsync(url).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var doc = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+            return doc.RootElement.Clone();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<JsonElement>? ExtractDiagnostics(JsonElement? root)
+    {
+        if (root is null)
+        {
+            return null;
+        }
+
+        var element = root.Value;
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray().Select(e => e.Clone()).ToList();
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var name in new[] { "checks", "diagnostics", "results", "items" })
+            {
+                if (element.TryGetProperty(name, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                {
+                    return arr.EnumerateArray().Select(e => e.Clone()).ToList();
+                }
+            }
+        }
+
+        return new List<JsonElement>();
+    }
+
+    // ---- Health resolution from /admin/setup/status ----
+    private string? HealthLabel
+    {
+        get
+        {
+            var raw = (StringValue("status", _status)
+                ?? StringValue("health", _status)
+                ?? StringValue("state", _status))?.ToLowerInvariant();
+
+            return raw switch
+            {
+                "healthy" or "ok" or "ready" or "running" => L["overview.healthy"],
+                "degraded" or "warning" or "warn" => L["overview.degraded"],
+                "unhealthy" or "down" or "failed" or "error" => L["overview.unhealthy"],
+                _ => null
+            };
+        }
+    }
+
+    private bool ShowHealthChip => !string.IsNullOrEmpty(HealthLabel);
+
+    private Color HealthColor => HealthLabel == L["overview.healthy"]
+        ? Color.Success
+        : HealthLabel == L["overview.degraded"]
+            ? Color.Warning
+            : HealthLabel == L["overview.unhealthy"]
+                ? Color.Error
+                : Color.Default;
+
+    private string HealthIcon => HealthColor switch
+    {
+        Color.Success => Icons.Material.Filled.CheckCircle,
+        Color.Warning => Icons.Material.Filled.Warning,
+        Color.Error => Icons.Material.Filled.ErrorOutline,
+        _ => Icons.Material.Filled.HelpOutline
+    };
+
+    // ---- Reading helpers ----
+    private string? StringValue(string key, JsonElement? source = null)
+    {
+        var root = source ?? _summary ?? _status;
+        if (root is null) return null;
+        return ReadString(root.Value, key);
+    }
+
+    private string NumberValue(string key)
+    {
+        var root = _summary ?? _status;
+        if (root is null) return "—";
+        if (TryReadNumber(root.Value, key, out var n))
+        {
+            return n.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return ReadString(root.Value, key) ?? "—";
+    }
+
+    private string FormatMemory()
+    {
+        var root = _summary ?? _status;
+        if (root is null) return "—";
+
+        if (TryReadNumber(root.Value, "memoryBytes", out var bytes)
+            || TryReadNumber(root.Value, "memory", out bytes)
+            || TryReadNumber(root.Value, "memoryUsageBytes", out bytes))
+        {
+            return FormatBytes((long)bytes);
+        }
+        return "—";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double size = bytes;
+        var idx = 0;
+        while (size >= 1024 && idx < units.Length - 1)
+        {
+            size /= 1024;
+            idx++;
+        }
+        return $"{size:0.##} {units[idx]}";
+    }
+
+    private string FormatUptime()
+    {
+        var root = _summary ?? _status;
+        if (root is null) return "—";
+
+        if (TryReadNumber(root.Value, "uptimeSeconds", out var seconds)
+            || TryReadNumber(root.Value, "uptime", out seconds))
+        {
+            var ts = TimeSpan.FromSeconds(seconds);
+            if (ts.TotalDays >= 1)
+            {
+                return $"{(int)ts.TotalDays}d {ts.Hours}h {ts.Minutes}m";
+            }
+            return $"{ts.Hours}h {ts.Minutes}m {ts.Seconds}s";
+        }
+
+        return ReadString(root.Value, "uptime") ?? "—";
+    }
+
+    private static string? ReadString(JsonElement element, params string[] names)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        foreach (var name in names)
+        {
+            if (element.TryGetProperty(name, out var prop))
+            {
+                return prop.ValueKind switch
+                {
+                    JsonValueKind.String => prop.GetString(),
+                    JsonValueKind.Number => prop.GetRawText(),
+                    JsonValueKind.True => "true",
+                    JsonValueKind.False => "false",
+                    _ => null
+                };
+            }
+        }
+        return null;
+    }
+
+    private static bool TryReadNumber(JsonElement element, string name, out double value)
+    {
+        value = 0;
+        if (element.ValueKind != JsonValueKind.Object) return false;
+        if (!element.TryGetProperty(name, out var prop)) return false;
+        if (prop.ValueKind == JsonValueKind.Number)
+        {
+            return prop.TryGetDouble(out value);
+        }
+        if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+        return false;
+    }
+
+    private static (Color, string) MapDiagnosticSeverity(string status) => status.ToLowerInvariant() switch
+    {
+        "ok" or "pass" or "passed" or "healthy" or "success" =>
+            (Color.Success, Icons.Material.Filled.CheckCircle),
+        "warn" or "warning" or "degraded" =>
+            (Color.Warning, Icons.Material.Filled.Warning),
+        "fail" or "failed" or "error" or "unhealthy" or "critical" =>
+            (Color.Error, Icons.Material.Filled.Cancel),
+        _ => (Color.Info, Icons.Material.Filled.Info)
+    };
+
+    private RenderFragment RenderMetricCard(string label, string value, string icon, string accent) => __builder =>
+    {
+        <MudCard Elevation="0"
+                 Outlined="true"
+                 Style="@($"border-radius: 12px; border-left: 3px solid {accent}; height: 100%;")">
+            <MudCardContent Class="py-4 px-4">
+                <div class="d-flex align-center justify-space-between mb-2">
+                    <MudText Typo="Typo.overline"
+                             Style="letter-spacing: 0.14em; opacity: 0.6; font-weight: 600;">
+                        @label
+                    </MudText>
+                    <MudIcon Icon="@icon" Style="@($"color: {accent}; opacity: 0.85;")" Size="Size.Medium" />
+                </div>
+                <MudText Typo="Typo.h4"
+                         Style="font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums;">
+                    @value
+                </MudText>
+            </MudCardContent>
+        </MudCard>
+    };
+
+    private RenderFragment RenderUptimeCard() => __builder =>
+    {
+        <MudCard Elevation="0"
+                 Outlined="true"
+                 Style="border-radius: 12px;">
+            <MudCardContent Class="py-4 px-4">
+                <div class="d-flex align-center gap-3">
+                    <MudIcon Icon="@Icons.Material.Filled.Timer"
+                             Color="Color.Tertiary"
+                             Size="Size.Large" />
+                    <div style="flex: 1;">
+                        <MudText Typo="Typo.overline"
+                                 Style="letter-spacing: 0.14em; opacity: 0.6; font-weight: 600;">
+                            @L["overview.uptime"]
+                        </MudText>
+                        <MudText Typo="Typo.h5"
+                                 Style="font-weight: 600; font-variant-numeric: tabular-nums;">
+                            @FormatUptime()
+                        </MudText>
+                    </div>
+                </div>
+            </MudCardContent>
+        </MudCard>
+    };
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}
