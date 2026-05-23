@@ -371,6 +371,7 @@ internal sealed class LearningService
             return proposal;
 
         UserProfile? appliedProfileBefore = proposal.AppliedProfileBefore;
+        Dictionary<string, string>? metadata = null;
 
         switch (proposal.Kind)
         {
@@ -415,7 +416,24 @@ internal sealed class LearningService
                 }
 
                 await SaveManagedSkillAsync(proposal.SkillName ?? proposal.Title, proposal.DraftContent, proposal.Id, proposal.DraftContentHash, ct);
-                await runtime.ReloadSkillsAsync(ct);
+                try
+                {
+                    await runtime.ReloadSkillsAsync(ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    metadata = new Dictionary<string, string>(proposal.Metadata, StringComparer.Ordinal)
+                    {
+                        ["reloadFailed"] = "true",
+                        ["reloadError"] = ex.Message,
+                        ["reloadException"] = ex.GetType().Name
+                    };
+                    _logger.LogWarning(ex, "Approved learning skill proposal '{ProposalId}' was saved, but live skill reload failed.", proposal.Id);
+                }
                 break;
             case LearningProposalKind.HarnessChange:
                 break;
@@ -441,6 +459,7 @@ internal sealed class LearningService
                     SkillName = proposal.SkillName ?? proposal.Title
                 }
                 : proposal.ManagedSkillMetadata,
+            metadata: metadata,
             statusUpdatedAtUtc: approvedAtUtc,
             reviewedAtUtc: approvedAtUtc,
             reviewNotes: string.Equals(proposal.Kind, LearningProposalKind.HarnessChange, StringComparison.OrdinalIgnoreCase)
@@ -680,6 +699,9 @@ internal sealed class LearningService
     private async Task EnsureSkillProposalAsync(Session session, string actorId, ChatTurn assistantTurn, CancellationToken ct)
     {
         var toolSequenceItems = assistantTurn.ToolCalls!.Select(static item => item.ToolName).ToArray();
+        if (toolSequenceItems.Distinct(StringComparer.OrdinalIgnoreCase).Count() < 2)
+            return;
+
         var normalizedToolSequence = NormalizeToolSequence(toolSequenceItems);
         var toolSequence = string.Join(" -> ", toolSequenceItems);
         var repeatedCount = session.History
@@ -870,9 +892,9 @@ Use it when repeated requests resemble the sessions that produced this draft.
             skillName,
             content,
             expectedHash,
-            proposal.ToolObservations,
+            proposal.ToolObservations ?? [],
             proposal.RepeatedCount == 0 ? _config.SkillProposalThreshold : proposal.RepeatedCount,
-            proposal.ValidationWarnings.Any(static warning => warning.Contains("fallback template", StringComparison.OrdinalIgnoreCase)));
+            proposal.ValidationWarnings?.Any(static warning => warning.Contains("fallback template", StringComparison.OrdinalIgnoreCase)) == true);
 
     private SkillDraftValidationResult ValidateSkillDraft(
         string skillName,
@@ -908,6 +930,11 @@ Use it when repeated requests resemble the sessions that produced this draft.
         if (content.Contains("..", StringComparison.Ordinal) || content.Contains('\0'))
         {
             errors.Add("Skill draft contains invalid path-like content.");
+        }
+
+        if (content.Contains("<think", StringComparison.OrdinalIgnoreCase) || content.Contains("</think>", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add("Skill draft contains reasoning markup and must be regenerated without hidden reasoning content.");
         }
 
         var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
@@ -1676,6 +1703,7 @@ Use it when repeated requests resemble the sessions that produced this draft.
         string? appliedAutomationId = null,
         string? managedSkillPath = null,
         ManagedLearningSkillMetadata? managedSkillMetadata = null,
+        IReadOnlyDictionary<string, string>? metadata = null,
         HarnessEvolutionProposal? harnessEvolution = null,
         IReadOnlyList<string>? sourceSessionIds = null,
         IReadOnlyList<string>? sourceTurnIds = null,
@@ -1709,6 +1737,9 @@ Use it when repeated requests resemble the sessions that produced this draft.
             AppliedAutomationId = appliedAutomationId ?? proposal.AppliedAutomationId,
             ManagedSkillPath = managedSkillPath ?? proposal.ManagedSkillPath,
             ManagedSkillMetadata = managedSkillMetadata ?? proposal.ManagedSkillMetadata,
+            Metadata = metadata is null
+                ? new Dictionary<string, string>(proposal.Metadata, StringComparer.Ordinal)
+                : new Dictionary<string, string>(metadata, StringComparer.Ordinal),
             HarnessEvolution = harnessEvolution ?? proposal.HarnessEvolution,
             SourceSessionIds = sourceSessionIds ?? proposal.SourceSessionIds,
             SourceTurnIds = sourceTurnIds ?? proposal.SourceTurnIds,

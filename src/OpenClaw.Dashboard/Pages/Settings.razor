@@ -1,0 +1,479 @@
+@page "/settings"
+@implements IDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>@L["settings.title"] · OpenClaw</PageTitle>
+
+@if (!Auth.HasRole("admin"))
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="my-4">
+        @L["auth.notAuthenticated"]
+    </MudAlert>
+    return;
+}
+
+<div class="oc-page">
+    <header class="oc-page__head">
+        <div class="oc-kicker">SYS · 01 / CONTROL</div>
+        <h1 class="oc-page__title">@L["settings.title"]</h1>
+        <div class="oc-page__sub">@L["settings.systemConfig"]</div>
+    </header>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-4" />
+    }
+    else
+    {
+        <div class="oc-grid">
+            <MudPaper Class="oc-panel" Elevation="0">
+                <div class="oc-panel__head">
+                    <span class="oc-kicker oc-kicker--accent">A · RUNTIME</span>
+                    <span class="oc-panel__title">@L["settings.systemConfig"]</span>
+                </div>
+                <div class="oc-panel__body">
+                    <MudNumericField T="int"
+                                     Label="@L["settings.maxConcurrentSessions"]"
+                                     @bind-Value="_maxConcurrent"
+                                     Min="0"
+                                     Max="10000"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                    <MudNumericField T="int"
+                                     Label="@L["settings.sessionTimeout"]"
+                                     @bind-Value="_sessionTimeout"
+                                     Min="0"
+                                     Max="1440"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                    <MudTextField T="string"
+                                  Label="@L["settings.usageFooter"]"
+                                  @bind-Value="_usageFooter"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="3" />
+                    <MudNumericField T="long"
+                                     Label="@L["settings.sessionTokenBudget"]"
+                                     @bind-Value="_sessionTokenBudget"
+                                     Min="0"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                    <MudNumericField T="int"
+                                     Label="@L["settings.sessionRateLimitPerMinute"]"
+                                     @bind-Value="_sessionRateLimitPerMinute"
+                                     Min="0"
+                                     Max="100000"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                </div>
+            </MudPaper>
+
+            <MudPaper Class="oc-panel" Elevation="0">
+                <div class="oc-panel__head">
+                    <span class="oc-kicker oc-kicker--accent">B · TOOLING</span>
+                    <span class="oc-panel__title">@L["settings.tooling"]</span>
+                </div>
+                <div class="oc-panel__body">
+                    <div class="oc-switchrow">
+                        <MudSwitch T="bool" @bind-Value="_allowShell"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.allowShell"]" />
+                        <MudSwitch T="bool" @bind-Value="_requireToolApproval"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.requireToolApproval"]" />
+                        <MudSwitch T="bool" @bind-Value="_readOnlyMode"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.readOnlyMode"]" />
+                        <MudSwitch T="bool" @bind-Value="_parallelToolExecution"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.parallelToolExecution"]" />
+                        <MudSwitch T="bool" @bind-Value="_enableBrowserTool"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.enableBrowserTool"]" />
+                        <MudSwitch T="bool" @bind-Value="_allowBrowserEvaluate"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.allowBrowserEvaluate"]" />
+                    </div>
+                    <MudTextField T="string"
+                                  Label="@L["settings.autonomyMode"]"
+                                  @bind-Value="_autonomyMode"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" />
+                    <MudNumericField T="int"
+                                     Label="@L["settings.toolApprovalTimeoutSeconds"]"
+                                     @bind-Value="_toolApprovalTimeoutSeconds"
+                                     Min="0"
+                                     Max="3600"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                </div>
+            </MudPaper>
+
+            <MudPaper Class="oc-panel oc-panel--wide" Elevation="0">
+                <div class="oc-panel__head">
+                    <span class="oc-kicker oc-kicker--accent">C · MEMORY</span>
+                    <span class="oc-panel__title">@L["settings.memoryRetention"]</span>
+                </div>
+                <div class="oc-panel__body">
+                    <div class="oc-switchrow">
+                        <MudSwitch T="bool" @bind-Value="_enableCompaction"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.enableCompaction"]" />
+                        <MudSwitch T="bool" @bind-Value="_retentionEnabled"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.retentionEnabled"]" />
+                        <MudSwitch T="bool" @bind-Value="_retentionRunOnStartup"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.retentionRunOnStartup"]" />
+                        <MudSwitch T="bool" @bind-Value="_retentionArchiveEnabled"
+                                   Color="Color.Primary"
+                                   Label="@L["settings.retentionArchiveEnabled"]" />
+                    </div>
+                    <MudNumericField T="int"
+                                     Label="@L["settings.maxHistoryTurns"]"
+                                     @bind-Value="_maxHistoryTurns"
+                                     Min="0"
+                                     Max="100000"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                    <MudNumericField T="int"
+                                     Label="@L["settings.compactionThreshold"]"
+                                     @bind-Value="_compactionThreshold"
+                                     Min="0"
+                                     Max="100000"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                    <MudNumericField T="int"
+                                     Label="@L["settings.compactionKeepRecent"]"
+                                     @bind-Value="_compactionKeepRecent"
+                                     Min="0"
+                                     Max="100000"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                    <MudNumericField T="int"
+                                     Label="@L["settings.retentionSweepIntervalMinutes"]"
+                                     @bind-Value="_retentionSweepIntervalMinutes"
+                                     Min="0"
+                                     Max="100000"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                    <MudNumericField T="int"
+                                     Label="@L["settings.retentionSessionTtlDays"]"
+                                     @bind-Value="_retentionSessionTtlDays"
+                                     Min="0"
+                                     Max="100000"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" />
+                </div>
+            </MudPaper>
+
+            <MudPaper Class="oc-panel oc-panel--wide" Elevation="0">
+                <div class="oc-panel__head">
+                    <span class="oc-kicker oc-kicker--accent">D · SNAPSHOT</span>
+                    <span class="oc-panel__title">@L["settings.fullSnapshot"]</span>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Tertiary">JSON</MudChip>
+                </div>
+                <div class="oc-panel__body">
+                    <MudTextField T="string"
+                                  @bind-Value="_settingsSnapshotJson"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="18"
+                                  Style="font-family:'JetBrains Mono','Fira Code',Consolas,monospace;font-size:0.85rem;" />
+                </div>
+            </MudPaper>
+        </div>
+
+        <footer class="oc-actionbar">
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.RestartAlt"
+                       OnClick="ResetSettings"
+                       Disabled="_saving">
+                @L["settings.resetSettings"]
+            </MudButton>
+            <MudSpacer />
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Save"
+                       OnClick="SaveSettings"
+                       Disabled="_saving">
+                @if (_saving)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                }
+                @L["common.save"]
+            </MudButton>
+        </footer>
+    }
+</div>
+
+<style>
+    .oc-page { max-width: 1280px; margin: 0 auto; }
+    .oc-page__head { padding: 0 0 1.5rem 0; border-bottom: 1px solid var(--mud-palette-lines-default); margin-bottom: 1.5rem; }
+    .oc-page__title { font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; margin: 0.25rem 0 0; }
+    .oc-page__sub { color: var(--mud-palette-text-secondary); font-size: 0.9rem; margin-top: 0.25rem; }
+    .oc-kicker { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--mud-palette-text-secondary); }
+    .oc-kicker--accent { color: var(--mud-palette-primary); }
+    .oc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1rem; }
+    .oc-panel { border: 1px solid var(--mud-palette-lines-default); border-radius: 4px; overflow: hidden; background: var(--mud-palette-surface); }
+    .oc-panel--wide { grid-column: 1 / -1; }
+    .oc-panel__head { display: flex; align-items: center; gap: 0.75rem; padding: 0.85rem 1.1rem; border-bottom: 1px solid var(--mud-palette-lines-default); background: linear-gradient(180deg, rgba(139,92,246,0.04), transparent); }
+    .oc-panel__title { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+    .oc-panel__body { padding: 1.1rem; display: flex; flex-direction: column; gap: 1rem; }
+    .oc-switchrow { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; padding: 0.25rem 0 0.5rem; border-bottom: 1px dashed var(--mud-palette-lines-default); }
+    .oc-actionbar { display: flex; align-items: center; gap: 1rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--mud-palette-lines-default); }
+</style>
+
+@code {
+    private int _maxConcurrent;
+    private int _sessionTimeout;
+    private long _sessionTokenBudget;
+    private int _sessionRateLimitPerMinute;
+    private string _usageFooter = string.Empty;
+    private string _autonomyMode = string.Empty;
+    private bool _requireToolApproval;
+    private int _toolApprovalTimeoutSeconds;
+    private bool _parallelToolExecution;
+    private bool _allowShell;
+    private bool _readOnlyMode;
+    private bool _enableBrowserTool;
+    private bool _allowBrowserEvaluate;
+    private int _maxHistoryTurns;
+    private bool _enableCompaction;
+    private int _compactionThreshold;
+    private int _compactionKeepRecent;
+    private bool _retentionEnabled;
+    private bool _retentionRunOnStartup;
+    private int _retentionSweepIntervalMinutes;
+    private int _retentionSessionTtlDays;
+    private bool _retentionArchiveEnabled;
+    private string _settingsSnapshotJson = "{}";
+    private bool _loading = true;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        if (Auth.HasRole("admin"))
+        {
+            await LoadSettings();
+        }
+        else
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadSettings()
+    {
+        _loading = true;
+        try
+        {
+            using var response = await Api.GetRawAsync("/admin/settings");
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+                return;
+            }
+
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+            var root = doc.RootElement;
+
+            var settings = root.GetProperty("settings");
+            LoadFields(settings);
+            _settingsSnapshotJson = FormatJson(settings);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveSettings()
+    {
+        _saving = true;
+        try
+        {
+            System.Text.Json.Nodes.JsonObject snapshot;
+            try
+            {
+                snapshot = ParseSnapshot();
+            }
+            catch
+            {
+                Snackbar.Add($"{L["common.error"]}: invalid JSON", Severity.Error);
+                _saving = false;
+                return;
+            }
+
+            using var response = await Api.PostRawAsync("/admin/settings", snapshot);
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+                await LoadSettings();
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ResetSettings()
+    {
+        var confirmed = await DialogService.ShowMessageBoxAsync(
+            L["common.confirm"],
+            L["settings.confirmReset"],
+            yesText: L["common.confirm"],
+            cancelText: L["common.cancel"]);
+
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            using var response = await Api.DeleteAsync("/admin/settings");
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+                await LoadSettings();
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void LoadFields(System.Text.Json.JsonElement settings)
+    {
+        _maxConcurrent = TryGetInt(settings, "maxConcurrentSessions") ?? 0;
+        _sessionTimeout = TryGetInt(settings, "sessionTimeoutMinutes") ?? 0;
+        _sessionTokenBudget = TryGetLong(settings, "sessionTokenBudget") ?? 0;
+        _sessionRateLimitPerMinute = TryGetInt(settings, "sessionRateLimitPerMinute") ?? 0;
+        _usageFooter = TryGetString(settings, "usageFooter") ?? string.Empty;
+        _autonomyMode = TryGetString(settings, "autonomyMode") ?? string.Empty;
+        _requireToolApproval = TryGetBool(settings, "requireToolApproval") ?? false;
+        _toolApprovalTimeoutSeconds = TryGetInt(settings, "toolApprovalTimeoutSeconds") ?? 0;
+        _parallelToolExecution = TryGetBool(settings, "parallelToolExecution") ?? false;
+        _allowShell = TryGetBool(settings, "allowShell") ?? false;
+        _readOnlyMode = TryGetBool(settings, "readOnlyMode") ?? false;
+        _enableBrowserTool = TryGetBool(settings, "enableBrowserTool") ?? false;
+        _allowBrowserEvaluate = TryGetBool(settings, "allowBrowserEvaluate") ?? false;
+        _maxHistoryTurns = TryGetInt(settings, "maxHistoryTurns") ?? 0;
+        _enableCompaction = TryGetBool(settings, "enableCompaction") ?? false;
+        _compactionThreshold = TryGetInt(settings, "compactionThreshold") ?? 0;
+        _compactionKeepRecent = TryGetInt(settings, "compactionKeepRecent") ?? 0;
+        _retentionEnabled = TryGetBool(settings, "retentionEnabled") ?? false;
+        _retentionRunOnStartup = TryGetBool(settings, "retentionRunOnStartup") ?? false;
+        _retentionSweepIntervalMinutes = TryGetInt(settings, "retentionSweepIntervalMinutes") ?? 0;
+        _retentionSessionTtlDays = TryGetInt(settings, "retentionSessionTtlDays") ?? 0;
+        _retentionArchiveEnabled = TryGetBool(settings, "retentionArchiveEnabled") ?? false;
+    }
+
+    private System.Text.Json.Nodes.JsonObject ParseSnapshot()
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(string.IsNullOrWhiteSpace(_settingsSnapshotJson) ? "{}" : _settingsSnapshotJson)?.AsObject()
+            ?? new System.Text.Json.Nodes.JsonObject();
+        node["maxConcurrentSessions"] = _maxConcurrent;
+        node["sessionTimeoutMinutes"] = _sessionTimeout;
+        node["sessionTokenBudget"] = _sessionTokenBudget;
+        node["sessionRateLimitPerMinute"] = _sessionRateLimitPerMinute;
+        node["usageFooter"] = _usageFooter;
+        node["autonomyMode"] = _autonomyMode;
+        node["requireToolApproval"] = _requireToolApproval;
+        node["toolApprovalTimeoutSeconds"] = _toolApprovalTimeoutSeconds;
+        node["parallelToolExecution"] = _parallelToolExecution;
+        node["allowShell"] = _allowShell;
+        node["readOnlyMode"] = _readOnlyMode;
+        node["enableBrowserTool"] = _enableBrowserTool;
+        node["allowBrowserEvaluate"] = _allowBrowserEvaluate;
+        node["maxHistoryTurns"] = _maxHistoryTurns;
+        node["enableCompaction"] = _enableCompaction;
+        node["compactionThreshold"] = _compactionThreshold;
+        node["compactionKeepRecent"] = _compactionKeepRecent;
+        node["retentionEnabled"] = _retentionEnabled;
+        node["retentionRunOnStartup"] = _retentionRunOnStartup;
+        node["retentionSweepIntervalMinutes"] = _retentionSweepIntervalMinutes;
+        node["retentionSessionTtlDays"] = _retentionSessionTtlDays;
+        node["retentionArchiveEnabled"] = _retentionArchiveEnabled;
+        _settingsSnapshotJson = node.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        return node;
+    }
+
+    private static string FormatJson(System.Text.Json.JsonElement value)
+        => System.Text.Json.JsonSerializer.Serialize(value, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+    private static int? TryGetInt(System.Text.Json.JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.Number when el.TryGetInt32(out var v) => v,
+            _ => null
+        };
+    }
+
+    private static long? TryGetLong(System.Text.Json.JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.Number when el.TryGetInt64(out var v) => v,
+            _ => null
+        };
+    }
+
+    private static string? TryGetString(System.Text.Json.JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind == System.Text.Json.JsonValueKind.String ? el.GetString() : null;
+    }
+
+    private static bool? TryGetBool(System.Text.Json.JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False => false,
+            _ => null
+        };
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}

@@ -1,0 +1,139 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject LocalizationService L
+@inject AuthService Auth
+@inject IJSRuntime JS
+@inject IDialogService DialogService
+
+<MudThemeProvider Theme="_theme" IsDarkMode="true" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="0" Dense="true">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                       Color="Color.Inherit"
+                       Edge="Edge.Start"
+                       OnClick="@ToggleDrawer" />
+        <MudText Typo="Typo.h6" Class="ml-2">OpenClaw</MudText>
+        <MudSpacer />
+
+        <LanguageSwitcher />
+
+        @if (Auth.IsAuthenticated)
+        {
+            <MudChip T="string" Color="Color.Success" Size="Size.Small" Class="ml-2">
+                @(Auth.CurrentAuth?.Username ?? Auth.CurrentAuth?.DisplayName ?? L["auth.notAuthenticated"]) (@Auth.CurrentAuth?.Role)
+            </MudChip>
+            <MudIconButton Icon="@Icons.Material.Filled.Logout"
+                           Color="Color.Inherit"
+                           OnClick="@HandleLogout"
+                           title="@L["auth.logout"]" />
+        }
+        else
+        {
+            <MudButton Variant="Variant.Text"
+                       Color="Color.Inherit"
+                       OnClick="@ShowLogin">@L["auth.login"]</MudButton>
+        }
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen"
+               ClipMode="DrawerClipMode.Always"
+               Elevation="2"
+               Variant="DrawerVariant.Mini"
+               OpenMiniOnHover="true">
+        <NavMenu />
+    </MudDrawer>
+
+    <MudMainContent Class="dashboard-main pa-4">
+        @if (_initialized)
+        {
+            @Body
+        }
+        else
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-4" />
+        }
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _drawerOpen = true;
+    private bool _initialized;
+
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#8b5cf6",
+            Secondary = "#0ea5e9",
+            Tertiary = "#f59e0b",
+            Background = "#f8fafc",
+            Surface = "#ffffff",
+            AppbarBackground = "#ffffff",
+            DrawerBackground = "#ffffff",
+            TextPrimary = "#0f172a",
+            TextSecondary = "#475569",
+            AppbarText = "#0f172a",
+            DrawerText = "#0f172a"
+        },
+        PaletteDark = new PaletteDark
+        {
+            Primary = "#8b5cf6",
+            Secondary = "#0ea5e9",
+            Tertiary = "#f59e0b",
+            Background = "#0b1020",
+            Surface = "#0f172a",
+            AppbarBackground = "#0f172a",
+            DrawerBackground = "#0f172a",
+            DrawerText = "#e2e8f0",
+            DrawerIcon = "#e2e8f0",
+            AppbarText = "#e2e8f0",
+            TextPrimary = "#e2e8f0",
+            TextSecondary = "#94a3b8",
+            ActionDefault = "#94a3b8",
+            ActionDisabled = "#475569",
+            ActionDisabledBackground = "#1e293b",
+            LinesDefault = "#1e293b",
+            LinesInputs = "#334155",
+            TableLines = "#1e293b",
+            Divider = "#1e293b",
+            DividerLight = "#334155"
+        }
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await L.InitializeAsync(JS);
+        L.OnLanguageChanged += HandleLanguageChanged;
+
+        Auth.OnAuthStateChanged += HandleAuthChanged;
+        await Auth.SyncAuth();
+        _initialized = true;
+    }
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    private void HandleAuthChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task HandleLogout()
+    {
+        await Auth.Logout();
+    }
+
+    private async Task ShowLogin()
+    {
+        var dialog = await DialogService.ShowAsync<LoginDialog>(L["auth.login"]);
+        await dialog.Result;
+    }
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+        Auth.OnAuthStateChanged -= HandleAuthChanged;
+    }
+}

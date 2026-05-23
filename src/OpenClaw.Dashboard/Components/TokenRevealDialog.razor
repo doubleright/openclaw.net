@@ -1,0 +1,75 @@
+@implements IDisposable
+@inject LocalizationService L
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@L["governance.generateToken"]</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudAlert Severity="Severity.Warning"
+                  Variant="Variant.Outlined"
+                  Icon="@Icons.Material.Filled.Warning"
+                  Class="mb-3">
+            @L["governance.tokenShownOncePrefix"] <strong>@L["governance.tokenShownOnceEmphasis"]</strong>@L["governance.tokenShownOnceSuffix"]
+        </MudAlert>
+
+        @if (!string.IsNullOrEmpty(AccountId))
+        {
+            <MudText Typo="Typo.caption" Style="opacity: 0.7;">
+                @L["governance.accountId"]: <code>@AccountId</code>
+            </MudText>
+        }
+
+        <MudPaper Elevation="0"
+                  Outlined="true"
+                  Class="pa-3 mt-2"
+                  Style="font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace; font-size: 13px; word-break: break-all; background: var(--mud-palette-background-grey);">
+            @Token
+        </MudPaper>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">@L["common.close"]</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.ContentCopy"
+                   OnClick="Copy">
+            @L["common.copy"]
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter] public string Token { get; set; } = string.Empty;
+    [Parameter] public string AccountId { get; set; } = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        L.OnLanguageChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task Copy()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Token);
+            Snackbar.Add(L["common.success"], MudBlazor.Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], MudBlazor.Severity.Error);
+        }
+    }
+
+    private void Close() => MudDialog.Close(DialogResult.Ok(true));
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleStateChanged;
+    }
+}

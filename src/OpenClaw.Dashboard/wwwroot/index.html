@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0b1020" />
+    <title>OpenClaw Dashboard</title>
+    <base href="/dashboard/" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700&family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        rel="stylesheet" />
+
+    <link href="_content/MudBlazor/MudBlazor.min.css" rel="stylesheet" />
+    <link href="css/app.css" rel="stylesheet" />
+
+    <link rel="icon" type="image/svg+xml"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1020'/%3E%3Cpath d='M9 22 L16 8 L23 22 M12 17 H20' stroke='%238b5cf6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E" />
+</head>
+
+<body>
+    <div id="app">
+        <div class="app-bootstrap" role="status" aria-live="polite">
+            <div class="app-bootstrap__glyph" aria-hidden="true">
+                <span></span><span></span><span></span>
+            </div>
+            <div class="app-bootstrap__label">
+                <span class="app-bootstrap__brand">OpenClaw</span>
+                <span class="app-bootstrap__caret">/</span>
+                <span class="app-bootstrap__hint">booting dashboard…</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui" hidden>
+        <span>An unhandled error has occurred.</span>
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+
+    <script src="_framework/blazor.webassembly.js"></script>
+    <script src="_content/MudBlazor/MudBlazor.min.js"></script>
+    <script>
+        window.openclawDashboard = window.openclawDashboard || {};
+
+        window.openclawDashboard.getBrowserLanguage = function () {
+            return navigator.language || navigator.userLanguage || '';
+        };
+
+        window.openclawDashboard.clickElementById = function (id) {
+            document.getElementById(id)?.click();
+        };
+
+        window.openclawDashboard.downloadFromBytes = function (filename, base64, contentType) {
+            try {
+                const binary = atob(base64);
+                const len = binary.length;
+                const buffer = new Uint8Array(len);
+                for (let i = 0; i < len; i++) { buffer[i] = binary.charCodeAt(i); }
+                const blob = new Blob([buffer], { type: contentType || 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename || 'download';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } catch (err) {
+                console.error('downloadFromBytes failed', err);
+            }
+        };
+
+        window.openclawDownload = function (name, contentType, base64) {
+            window.openclawDashboard.downloadFromBytes(name || 'download.bin', base64, contentType || 'application/octet-stream');
+        };
+    </script>
+</body>
+
+</html>

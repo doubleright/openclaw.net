@@ -1,0 +1,598 @@
+@page "/observability"
+@implements IDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+@using System.Globalization
+@using System.Text.Json
+@using MudBlazor.Charts
+
+<PageTitle>@L["observability.title"] · OpenClaw</PageTitle>
+
+<section class="obs-shell">
+
+    @* ── Header ─────────────────────────────────────────────────────────── *@
+    <header class="obs-hero">
+        <div class="obs-hero__crumb">
+            <span class="obs-hero__index">06</span>
+            <span class="obs-hero__slash">/</span>
+            <span class="obs-hero__crumb-text">observability · live signals</span>
+        </div>
+        <h1 class="obs-hero__title">@L["observability.title"]</h1>
+        <p class="obs-hero__lead">
+            @L["observability.metrics"] · <span class="obs-hero__pulse">@_lastSyncLabel</span>
+        </p>
+
+        <div class="obs-hero__rail">
+            <MudSelect T="string"
+                       Value="_range"
+                       ValueChanged="OnRangeChanged"
+                       Label="@L["observability.timeRange"]"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       Dense="true"
+                       Class="obs-range">
+                <MudSelectItem Value="@("24h")">@L["observability.last24h"]</MudSelectItem>
+                <MudSelectItem Value="@("7d")">@L["observability.last7d"]</MudSelectItem>
+                <MudSelectItem Value="@("30d")">@L["observability.last30d"]</MudSelectItem>
+            </MudSelect>
+
+            <MudButton StartIcon="@Icons.Material.Filled.Refresh"
+                       Variant="Variant.Outlined"
+                       Color="Color.Default"
+                       Disabled="_loading"
+                       OnClick="ReloadAsync"
+                       Class="obs-btn obs-btn--ghost">
+                @L["common.refresh"]
+            </MudButton>
+
+            <MudButton StartIcon="@Icons.Material.Filled.Description"
+                       Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Disabled="_exporting"
+                       OnClick="@(() => DownloadFile("/admin/audit/export", "audit-log.json"))"
+                       Class="obs-btn">
+                @L["observability.auditExport"]
+            </MudButton>
+
+            <MudButton StartIcon="@Icons.Material.Filled.Timeline"
+                       Variant="Variant.Filled"
+                       Color="Color.Secondary"
+                       Disabled="_exporting"
+                       OnClick="@(() => DownloadFile("/admin/trajectory/export", "trajectories.jsonl"))"
+                       Class="obs-btn">
+                @L["observability.trajectoryExport"]
+            </MudButton>
+        </div>
+    </header>
+
+    @* ── Metric summary grid ────────────────────────────────────────────── *@
+    <div class="obs-section">
+        <div class="obs-section__head">
+            <span class="obs-eyebrow">summary</span>
+            <span class="obs-section__rule"></span>
+        </div>
+
+        @if (_loading && _summary.Count == 0)
+        {
+            <div class="obs-grid">
+                @for (var i = 0; i < 4; i++)
+                {
+                    <div class="obs-metric obs-metric--skeleton">
+                        <div class="obs-metric__bar"></div>
+                    </div>
+                }
+            </div>
+        }
+        else if (_summary.Count == 0)
+        {
+            <MudPaper Class="obs-empty" Elevation="0">
+                <MudIcon Icon="@Icons.Material.Outlined.QueryStats" Size="Size.Large" />
+                <div>@L["common.noData"]</div>
+            </MudPaper>
+        }
+        else
+        {
+            <div class="obs-grid">
+                @{
+                    var idx = 0;
+                }
+                @foreach (var kv in _summary)
+                {
+                    var accent = _accentPalette[idx % _accentPalette.Length];
+                    idx++;
+                    <article class="obs-metric" style="@($"--metric-accent:{accent};")">
+                        <div class="obs-metric__label">@PrettifyKey(kv.Key)</div>
+                        <div class="obs-metric__value">@FormatValue(kv.Value)</div>
+                        <div class="obs-metric__spark" aria-hidden="true"></div>
+                    </article>
+                }
+            </div>
+        }
+    </div>
+
+    @* ── Time series chart ──────────────────────────────────────────────── *@
+    <div class="obs-section">
+        <div class="obs-section__head">
+            <span class="obs-eyebrow">time-series</span>
+            <span class="obs-section__rule"></span>
+            <span class="obs-section__hint">@_range</span>
+        </div>
+
+        <MudPaper Class="obs-chart" Elevation="0">
+            @if (_loading && _series.Count == 0)
+            {
+                <div class="obs-chart__skeleton">
+                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+                    <span>@L["common.loading"]</span>
+                </div>
+            }
+            else if (_series.Count == 0)
+            {
+                <div class="obs-chart__empty">
+                    <MudIcon Icon="@Icons.Material.Outlined.ShowChart" Size="Size.Large" />
+                    <span>@L["common.noData"]</span>
+                </div>
+            }
+            else
+            {
+                <MudChart ChartType="ChartType.Line"
+                          ChartSeries="_series"
+                          ChartLabels="_xLabels"
+                          Width="100%"
+                          Height="360px"
+                          ChartOptions="_chartOptions" />
+            }
+        </MudPaper>
+    </div>
+</section>
+
+@code {
+    private string _range = "24h";
+    private bool _loading;
+    private bool _exporting;
+    private string _lastSyncLabel = "—";
+
+    private Dictionary<string, JsonElement> _summary = new(StringComparer.Ordinal);
+    private List<ChartSeries<double>> _series = new();
+    private string[] _xLabels = Array.Empty<string>();
+
+    private readonly LineChartOptions _chartOptions = new()
+    {
+        LineStrokeWidth = 2,
+        YAxisTicks = 5,
+        InterpolationOption = InterpolationOption.NaturalSpline,
+        ChartPalette = new[]
+        {
+            "#8b5cf6", "#22d3ee", "#f59e0b", "#34d399", "#f472b6", "#60a5fa"
+        }
+    };
+
+    private static readonly string[] _accentPalette =
+    {
+        "#8b5cf6", "#22d3ee", "#f59e0b", "#34d399", "#f472b6", "#60a5fa"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        await ReloadAsync();
+    }
+
+    private async Task OnRangeChanged(string range)
+    {
+        _range = range;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            await LoadSummaryAsync();
+            await LoadSeriesAsync();
+            _lastSyncLabel = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadSummaryAsync()
+    {
+        var url = $"/admin/observability/summary?range={Uri.EscapeDataString(_range)}";
+        var element = await Api.GetAsync<JsonElement>(url);
+        var dict = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in element.EnumerateObject())
+            {
+                dict[prop.Name] = prop.Value.Clone();
+            }
+        }
+
+        _summary = dict;
+    }
+
+    private async Task LoadSeriesAsync()
+    {
+        var url = $"/admin/observability/series?range={Uri.EscapeDataString(_range)}";
+        var element = await Api.GetAsync<JsonElement>(url);
+
+        var labels = new List<string>();
+        var series = new List<ChartSeries<double>>();
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("labels", out var labelsEl) && labelsEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in labelsEl.EnumerateArray())
+                {
+                    labels.Add(item.ValueKind == JsonValueKind.String ? (item.GetString() ?? "") : item.GetRawText());
+                }
+            }
+
+            if (element.TryGetProperty("series", out var seriesEl) && seriesEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var s in seriesEl.EnumerateArray())
+                {
+                    series.Add(ParseSeries(s));
+                }
+            }
+            else
+            {
+                // Treat each numeric-array property as its own series.
+                foreach (var prop in element.EnumerateObject())
+                {
+                    if (string.Equals(prop.Name, "labels", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (prop.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        series.Add(new ChartSeries<double>
+                        {
+                            Name = PrettifyKey(prop.Name),
+                            Data = prop.Value.EnumerateArray().Select(ReadDouble).ToArray()
+                        });
+                    }
+                }
+            }
+        }
+
+        _xLabels = labels.Count > 0
+            ? labels.ToArray()
+            : DefaultLabels(series);
+        _series = series;
+    }
+
+    private static string[] DefaultLabels(List<ChartSeries<double>> series)
+    {
+        var first = series.FirstOrDefault();
+        var n = first is null ? 0 : (first.Data?.Values?.Count ?? 0);
+        return n > 0
+            ? Enumerable.Range(1, n).Select(i => i.ToString(CultureInfo.InvariantCulture)).ToArray()
+            : Array.Empty<string>();
+    }
+
+    private static ChartSeries<double> ParseSeries(JsonElement element)
+    {
+        var name = "series";
+        double[] data = Array.Empty<double>();
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
+            {
+                name = nameEl.GetString() ?? name;
+            }
+
+            if (element.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array)
+            {
+                data = dataEl.EnumerateArray().Select(ReadDouble).ToArray();
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            data = element.EnumerateArray().Select(ReadDouble).ToArray();
+        }
+
+        return new ChartSeries<double> { Name = name, Data = data };
+    }
+
+    private static double ReadDouble(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Number => element.TryGetDouble(out var d) ? d : 0d,
+        JsonValueKind.String when double.TryParse(element.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var d) => d,
+        JsonValueKind.True => 1d,
+        JsonValueKind.False => 0d,
+        _ => 0d
+    };
+
+    private async Task DownloadFile(string url, string filename)
+    {
+        _exporting = true;
+        StateHasChanged();
+
+        try
+        {
+            using var response = await Api.GetRawAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+                return;
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            await JS.InvokeVoidAsync(
+                "openclawDashboard.downloadFromBytes",
+                filename,
+                Convert.ToBase64String(bytes),
+                contentType);
+
+            Snackbar.Add(L["common.success"], Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string FormatValue(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Number => element.TryGetInt64(out var i)
+            ? i.ToString("N0", CultureInfo.InvariantCulture)
+            : element.GetDouble().ToString("0.###", CultureInfo.InvariantCulture),
+        JsonValueKind.String => element.GetString() ?? "—",
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        JsonValueKind.Null => "—",
+        _ => element.GetRawText()
+    };
+
+    private static string PrettifyKey(string key)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            return key;
+        }
+
+        var spaced = System.Text.RegularExpressions.Regex.Replace(
+            key.Replace('_', ' ').Replace('-', ' '),
+            "([a-z])([A-Z])",
+            "$1 $2");
+        return char.ToUpperInvariant(spaced[0]) + spaced.Substring(1);
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}
+
+<style>
+    .obs-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 36px;
+        padding: 8px 4px 48px;
+        max-width: 1480px;
+        margin: 0 auto;
+    }
+
+    /* ── Hero ──────────────────────────────────────────────────────────── */
+    .obs-hero {
+        position: relative;
+        padding: 28px 32px 32px;
+        border-radius: 24px;
+        background:
+            radial-gradient(900px 380px at 0% 0%, rgba(139, 92, 246, 0.18), transparent 60%),
+            radial-gradient(700px 320px at 100% 0%, rgba(34, 211, 238, 0.10), transparent 65%),
+            linear-gradient(180deg, rgba(20, 26, 50, 0.55), rgba(11, 16, 32, 0.4));
+        border: 1px solid rgba(139, 146, 200, 0.16);
+        overflow: hidden;
+    }
+
+    .obs-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.55), rgba(255, 255, 255, 0.35), rgba(34, 211, 238, 0.45), transparent);
+    }
+
+    .obs-hero__crumb {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+    .obs-hero__index { color: var(--accent-hot); font-weight: 700; }
+    .obs-hero__slash { color: var(--accent); }
+
+    .obs-hero__title {
+        font-family: var(--font-display);
+        font-size: clamp(30px, 3.4vw, 44px);
+        font-weight: 500;
+        letter-spacing: -0.03em;
+        margin: 10px 0 6px;
+        color: var(--text-strong);
+    }
+
+    .obs-hero__lead {
+        margin: 0 0 22px;
+        color: var(--muted);
+        font-size: 13px;
+    }
+    .obs-hero__pulse {
+        font-family: var(--font-mono);
+        color: var(--accent-hot);
+        margin-left: 8px;
+    }
+
+    .obs-hero__rail {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .obs-range { min-width: 220px; }
+    .obs-btn { text-transform: none !important; letter-spacing: 0.01em; border-radius: 10px !important; }
+    .obs-btn--ghost { color: var(--text) !important; border-color: var(--border-bold) !important; }
+
+    /* ── Section heading ───────────────────────────────────────────────── */
+    .obs-section { display: flex; flex-direction: column; gap: 16px; }
+    .obs-section__head {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 4px;
+    }
+    .obs-eyebrow {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+    .obs-section__rule {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--border-bold), transparent);
+    }
+    .obs-section__hint {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--accent-hot);
+        letter-spacing: 0.1em;
+    }
+
+    /* ── Metric grid ───────────────────────────────────────────────────── */
+    .obs-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .obs-metric {
+        position: relative;
+        padding: 22px 22px 28px;
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(20, 26, 50, 0.7), rgba(11, 16, 32, 0.55));
+        border: 1px solid rgba(139, 146, 200, 0.12);
+        overflow: hidden;
+        transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1), border-color 200ms;
+    }
+    .obs-metric:hover {
+        transform: translateY(-2px);
+        border-color: rgba(139, 92, 246, 0.4);
+    }
+    .obs-metric::before {
+        content: "";
+        position: absolute;
+        inset: auto 0 0 0;
+        height: 3px;
+        background: linear-gradient(90deg, transparent, var(--metric-accent, var(--accent)), transparent);
+        opacity: 0.75;
+    }
+    .obs-metric__label {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+    .obs-metric__value {
+        font-family: var(--font-display);
+        font-size: clamp(28px, 2.6vw, 34px);
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: var(--text-strong);
+        margin: 14px 0 6px;
+        word-break: break-word;
+    }
+    .obs-metric__spark {
+        height: 8px;
+        border-radius: 4px;
+        background:
+            linear-gradient(90deg,
+                color-mix(in srgb, var(--metric-accent, var(--accent)) 70%, transparent),
+                color-mix(in srgb, var(--metric-accent, var(--accent)) 5%, transparent));
+        opacity: 0.55;
+    }
+
+    .obs-metric--skeleton { min-height: 120px; }
+    .obs-metric--skeleton .obs-metric__bar {
+        height: 12px; width: 60%; border-radius: 6px;
+        background: linear-gradient(90deg, rgba(139, 146, 200, 0.06), rgba(139, 146, 200, 0.18), rgba(139, 146, 200, 0.06));
+        background-size: 200% 100%;
+        animation: obs-shimmer 1.4s linear infinite;
+    }
+    @@keyframes obs-shimmer {
+        0%   { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+
+    /* ── Chart panel ───────────────────────────────────────────────────── */
+    .obs-chart {
+        padding: 24px 22px 18px !important;
+        border-radius: 20px !important;
+        background:
+            linear-gradient(180deg, rgba(20, 26, 50, 0.7), rgba(11, 16, 32, 0.5)) !important;
+        border: 1px solid rgba(139, 146, 200, 0.14) !important;
+    }
+    .obs-chart__skeleton,
+    .obs-chart__empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        min-height: 280px;
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+    }
+    .obs-chart__skeleton { gap: 18px; }
+    .obs-chart__skeleton .mud-progress-linear { width: min(420px, 60%); }
+
+    .obs-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 36px 24px !important;
+        border-radius: 18px !important;
+        border: 1px dashed rgba(139, 146, 200, 0.25) !important;
+        background: rgba(11, 16, 32, 0.4) !important;
+        color: var(--muted) !important;
+    }
+</style>

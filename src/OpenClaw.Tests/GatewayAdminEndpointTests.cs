@@ -1931,6 +1931,46 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task LearningService_SkillDraftProposal_IgnoresRepeatedSingleToolWorkflow()
+    {
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-learning-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+        try
+        {
+            var store = new FileFeatureStore(storagePath);
+            var service = new LearningService(
+                new LearningConfig { SkillProposalThreshold = 2, AutomationProposalThreshold = 99 },
+                store,
+                store,
+                store,
+                new StaticSessionSearchStore([]),
+                NullLogger<LearningService>.Instance);
+            var session = new Session
+            {
+                Id = "sess-single-tool-repeat",
+                ChannelId = "web",
+                SenderId = "operator",
+                History =
+                [
+                    new ChatTurn { Role = "user", Content = "Check session history." },
+                    BuildAssistantToolTurn("sessions_history", "sessions_history", "sessions_history"),
+                    BuildAssistantToolTurn("sessions_history", "sessions_history", "sessions_history")
+                ]
+            };
+
+            await service.ObserveSessionAsync(session, CancellationToken.None);
+
+            var proposals = await store.ListProposalsAsync(LearningProposalStatus.Pending, LearningProposalKind.SkillDraft, CancellationToken.None);
+            Assert.Empty(proposals);
+        }
+        finally
+        {
+            if (Directory.Exists(storagePath))
+                Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task LearningService_AutomationSuggestion_DuplicateUpdatesPendingProposal()
     {
         var storagePath = Path.Join(Path.GetTempPath(), "openclaw-learning-tests", Guid.NewGuid().ToString("N"));
@@ -2465,6 +2505,171 @@ public sealed class GatewayAdminEndpointTests
         Assert.False(rolledBackAutomation.Enabled);
         Assert.True(rolledBackAutomation.IsDraft);
         Assert.Equal("lp_rollback_automation", rolledBackAutomation.CreatedByLearningProposalId);
+    }
+
+    [Fact]
+    public async Task LearningProposalApprove_SkillDraft_WithReasoningMarkupRejectsWithValidationError()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        var store = new FileFeatureStore(harness.StoragePath);
+        var draft = """
+            </think>
+
+            ---
+            name: reasoning-leak-skill
+            description: Validate reasoning markup rejection
+            ---
+
+            Use when testing leaked reasoning markup rejection.
+            """;
+        await store.SaveProposalAsync(new LearningProposal
+        {
+            Id = "lp_reasoning_markup_skill",
+            Kind = LearningProposalKind.SkillDraft,
+            Status = LearningProposalStatus.Pending,
+            ActorId = "web:operator",
+            Title = "Reasoning markup skill draft",
+            Summary = "Leaked reasoning markup test.",
+            SkillName = "reasoning-leak-skill",
+            DraftContent = draft,
+            DraftContentHash = ComputeTestHash(draft)
+        }, CancellationToken.None);
+
+        using var approveRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/learning/proposals/lp_reasoning_markup_skill/approve");
+        approveRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        using var approveResponse = await harness.Client.SendAsync(approveRequest);
+        Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+        using var approvePayload = await ReadJsonAsync(approveResponse);
+        Assert.Equal("rejected", approvePayload.RootElement.GetProperty("status").GetString());
+        Assert.Equal("error", approvePayload.RootElement.GetProperty("validationStatus").GetString());
+        Assert.Contains(
+            approvePayload.RootElement.GetProperty("validationErrors").EnumerateArray().Select(static item => item.GetString()),
+            static error => error is not null && error.Contains("reasoning markup", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task LearningProposalApprove_SkillDraft_ReloadFailureApprovesAndReportsFailure()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        harness.Runtime.AgentRuntime.ReloadSkillsAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<IReadOnlyList<string>>>(_ => throw new InvalidOperationException("Skill reload failed."));
+
+        var store = new FileFeatureStore(harness.StoragePath);
+        var skillName = $"reload-failure-skill-{Guid.NewGuid():N}";
+        var skillsRoot = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openclaw", "skills");
+        var skillPath = Path.Join(skillsRoot, Path.GetFileName(skillName));
+        if (Directory.Exists(skillPath))
+            Directory.Delete(skillPath, recursive: true);
+
+        var draft = $"""
+            ---
+            name: {skillName}
+            description: Validate reload failure does not fail approval
+            ---
+
+            Use when testing approved learning skill reload failure handling.
+            """;
+
+        try
+        {
+            await store.SaveProposalAsync(new LearningProposal
+            {
+                Id = "lp_reload_failure_skill",
+                Kind = LearningProposalKind.SkillDraft,
+                Status = LearningProposalStatus.Pending,
+                ActorId = "web:operator",
+                Title = "Reload failure skill draft",
+                Summary = "Skill reload failure approval test.",
+                SkillName = skillName,
+                DraftContent = draft,
+                DraftContentHash = ComputeTestHash(draft),
+                RiskLevel = LearningProposalRiskLevels.High,
+                ValidationStatus = LearningProposalValidationStatuses.Warning,
+                ValidationWarnings = ["Observed tool sequence includes mutating tools."]
+            }, CancellationToken.None);
+
+            using var approveRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/learning/proposals/lp_reload_failure_skill/approve");
+            approveRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+            using var approveResponse = await harness.Client.SendAsync(approveRequest);
+            Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+            using var approvePayload = await ReadJsonAsync(approveResponse);
+            Assert.Equal("approved", approvePayload.RootElement.GetProperty("status").GetString());
+            Assert.Equal(skillPath, approvePayload.RootElement.GetProperty("managedSkillPath").GetString());
+            var metadata = approvePayload.RootElement.GetProperty("metadata");
+            Assert.Equal("true", metadata.GetProperty("reloadFailed").GetString());
+            Assert.Equal("Skill reload failed.", metadata.GetProperty("reloadError").GetString());
+            Assert.Equal("InvalidOperationException", metadata.GetProperty("reloadException").GetString());
+            Assert.True(File.Exists(Path.Join(skillPath, "SKILL.md")));
+
+            using var detailRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/learning/proposals/lp_reload_failure_skill");
+            detailRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+            using var detailResponse = await harness.Client.SendAsync(detailRequest);
+            Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+            using var detailPayload = await ReadJsonAsync(detailResponse);
+            var persistedMetadata = detailPayload.RootElement.GetProperty("proposal").GetProperty("metadata");
+            Assert.Equal("true", persistedMetadata.GetProperty("reloadFailed").GetString());
+            Assert.Equal("Skill reload failed.", persistedMetadata.GetProperty("reloadError").GetString());
+            Assert.Equal("InvalidOperationException", persistedMetadata.GetProperty("reloadException").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(skillPath))
+                Directory.Delete(skillPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LearningProposalApprove_SkillDraft_NullValidationCollectionsStillApprovesProposal()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        var store = new FileFeatureStore(harness.StoragePath);
+        var skillName = $"legacy-null-collections-skill-{Guid.NewGuid():N}";
+        var skillsRoot = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openclaw", "skills");
+        var skillPath = Path.Join(skillsRoot, Path.GetFileName(skillName));
+        if (Directory.Exists(skillPath))
+            Directory.Delete(skillPath, recursive: true);
+
+        var draft = $"""
+            ---
+            name: {skillName}
+            description: Validate legacy null collection approval
+            ---
+
+            Use when testing legacy learning proposal approval.
+            """;
+
+        try
+        {
+            await store.SaveProposalAsync(new LearningProposal
+            {
+                Id = "lp_legacy_null_collections_skill",
+                Kind = LearningProposalKind.SkillDraft,
+                Status = LearningProposalStatus.Pending,
+                ActorId = "web:operator",
+                Title = "Legacy null collections skill draft",
+                Summary = "Legacy proposal approval test.",
+                SkillName = skillName,
+                DraftContent = draft,
+                DraftContentHash = ComputeTestHash(draft),
+                ValidationWarnings = null!,
+                ValidationErrors = null!,
+                ToolObservations = null!
+            }, CancellationToken.None);
+
+            using var approveRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/learning/proposals/lp_legacy_null_collections_skill/approve");
+            approveRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+            using var approveResponse = await harness.Client.SendAsync(approveRequest);
+            Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+            using var approvePayload = await ReadJsonAsync(approveResponse);
+            Assert.Equal("approved", approvePayload.RootElement.GetProperty("status").GetString());
+            Assert.Equal(skillPath, approvePayload.RootElement.GetProperty("managedSkillPath").GetString());
+            Assert.True(File.Exists(Path.Join(skillPath, "SKILL.md")));
+        }
+        finally
+        {
+            if (Directory.Exists(skillPath))
+                Directory.Delete(skillPath, recursive: true);
+        }
     }
 
     [Fact]

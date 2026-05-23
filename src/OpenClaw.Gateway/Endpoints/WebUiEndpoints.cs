@@ -50,5 +50,31 @@ internal static class WebUiEndpoints
                 </div></body></html>
                 """);
         });
+
+        // Dashboard SPA fallback — all non-file requests under /dashboard/ serve index.html.
+        // Static files (js, css, wasm, etc.) are handled by UseStaticFiles() with a
+        // PhysicalFileProvider and MapStaticAssets() before routing. If a file path
+        // reaches here, the file does not exist — return 404 instead of index.html
+        // to avoid the "Unexpected token '<'" error in browsers.
+        app.MapGet("/dashboard/{**path}", async (HttpContext ctx, string? path) =>
+        {
+            // Paths with file extensions are static asset requests that were not
+            // satisfied by the static-file middleware — return 404.
+            if (!string.IsNullOrEmpty(path) && Path.HasExtension(path))
+            {
+                ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+
+            var htmlPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "dashboard", "index.html");
+            if (File.Exists(htmlPath))
+            {
+                ctx.Response.ContentType = "text/html";
+                await ctx.Response.SendFileAsync(htmlPath);
+                return;
+            }
+
+            ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+        });
     }
 }
