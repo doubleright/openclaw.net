@@ -1,0 +1,668 @@
+@page "/heartbeat"
+@implements IDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>@L["heartbeat.title"] · OpenClaw</PageTitle>
+
+@if (!Auth.HasRole("operator"))
+{
+    <MudPaper Class="pa-8 d-flex flex-column align-center justify-center" Elevation="0"
+              Style="border:1px dashed var(--mud-palette-lines-default); background:transparent;">
+        <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Large" Color="Color.Warning" />
+        <MudText Typo="Typo.h6" Class="mt-3">@L["common.forbidden"]</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Secondary">@L["common.requires_operator"]</MudText>
+    </MudPaper>
+    return;
+}
+
+<div class="hb-shell">
+    <header class="hb-hero">
+        <div class="hb-hero__meta">
+            <span class="hb-eyebrow">// pulse · cron · cadence</span>
+            <h1 class="hb-title">
+                <span class="hb-title__beat">@L["heartbeat.title"]</span>
+                <span class="hb-title__rhythm">@(_config.Enabled ? L["heartbeat.alive"] : L["heartbeat.dormant"])</span>
+            </h1>
+            <p class="hb-lede">@L["heartbeat.lede"]</p>
+        </div>
+        <div class="hb-hero__pulse" data-active="@_config.Enabled.ToString().ToLowerInvariant()">
+            <div class="hb-pulse-ring"></div>
+            <div class="hb-pulse-ring hb-pulse-ring--delay"></div>
+            <div class="hb-pulse-core">
+                <MudIcon Icon="@Icons.Material.Filled.Favorite" Size="Size.Large" />
+            </div>
+        </div>
+    </header>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-4" />
+    }
+    else
+    {
+        <section class="hb-grid">
+            <article class="hb-card hb-card--config">
+                <header class="hb-card__head">
+                    <span class="hb-card__index">01</span>
+                    <h2>@L["heartbeat.config"]</h2>
+                    <span class="hb-card__rule"></span>
+                </header>
+
+                <div class="hb-card__body">
+                    <div class="hb-row hb-row--switch">
+                        <div>
+                            <MudText Typo="Typo.subtitle1">@L["heartbeat.enabled"]</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@L["heartbeat.enabled.hint"]</MudText>
+                        </div>
+                        <MudSwitch T="bool" Value="_config.Enabled"
+                                   ValueChanged="@(v => _config = _config with { Enabled = v })"
+                                   Color="Color.Primary" />
+                    </div>
+
+                    <MudTextField T="string"
+                                  Value="_config.CronExpression"
+                                  ValueChanged="@(v => _config = _config with { CronExpression = v })"
+                                  Label="@L["heartbeat.cron"]"
+                                  HelperText="@L["heartbeat.cron.hint"]"
+                                  Variant="Variant.Outlined"
+                                  Class="mt-4" />
+
+                    <div class="hb-cost">
+                        <span class="hb-cost__label">@L["heartbeat.cost.estimate"]</span>
+                        <span class="hb-cost__value">@(_heartbeatStatus?.LastResult ?? "—")</span>
+                    </div>
+                </div>
+            </article>
+
+            <article class="hb-card hb-card--pulse">
+                <header class="hb-card__head">
+                    <span class="hb-card__index">02</span>
+                    <h2>@L["heartbeat.pulse"]</h2>
+                    <span class="hb-card__rule"></span>
+                </header>
+
+                <div class="hb-card__body">
+                    <div class="hb-status">
+                        <div class="hb-status__chip" data-state="@(_pulseStatus?.Running == true ? "on" : "off")">
+                            <span class="hb-status__dot"></span>
+                            @(_pulseStatus?.Running == true ? L["heartbeat.running"] : L["heartbeat.idle"])
+                        </div>
+                        <div class="hb-status__times">
+                            <div>
+                                <span class="hb-status__k">@L["heartbeat.last_run"]</span>
+                                <span class="hb-status__v">@FormatTime(_heartbeatStatus?.LastRun?.LastRunAtUtc)</span>
+                            </div>
+                            <div>
+                                <span class="hb-status__k">@L["heartbeat.next_run"]</span>
+                                <span class="hb-status__v">@FormatTime(_heartbeatStatus?.NextRun)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Tertiary"
+                               StartIcon="@Icons.Material.Filled.Bolt"
+                               OnClick="TriggerPulse"
+                               Disabled="_triggering"
+                               FullWidth="true"
+                               Class="hb-pulse-btn mt-3">
+                        @if (_triggering)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        @L["heartbeat.trigger"]
+                    </MudButton>
+
+                    <div class="hb-events">
+                        <div class="hb-events__head">
+                            <span>@L["heartbeat.events"]</span>
+                            <span class="hb-events__count">@(_pulseEvents?.Count ?? 0)</span>
+                        </div>
+                        @if (_pulseEvents is null || _pulseEvents.Count == 0)
+                        {
+                            <div class="hb-empty">@L["heartbeat.events.empty"]</div>
+                        }
+                        else
+                        {
+                            <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="hb-table">
+                                <thead>
+                                    <tr>
+                                        <th>@L["heartbeat.events.type"]</th>
+                                        <th>@L["heartbeat.events.time"]</th>
+                                        <th>@L["heartbeat.events.details"]</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var ev in _pulseEvents)
+                                    {
+                                        <tr>
+                                            <td><span class="hb-evtype">@(ev.EventType ?? "—")</span></td>
+                                            <td>@FormatTime(ev.Timestamp)</td>
+                                            <td class="hb-evdetails">@(ev.Details ?? "")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </MudSimpleTable>
+                        }
+                    </div>
+                </div>
+            </article>
+        </section>
+
+        <section class="hb-tasks">
+            <header class="hb-tasks__head">
+                <div>
+                    <span class="hb-card__index">03</span>
+                    <h2>@L["heartbeat.tasks"]</h2>
+                    <p>@L["heartbeat.tasks.hint"]</p>
+                </div>
+                <div class="hb-tasks__actions">
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="AddTask">
+                        @L["heartbeat.tasks.add"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Save"
+                               OnClick="SaveConfig"
+                               Disabled="_saving">
+                        @if (_saving)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        @L["common.save"]
+                    </MudButton>
+                </div>
+            </header>
+
+            @if (_config.Tasks is null || _config.Tasks.Count == 0)
+            {
+                <MudPaper Class="hb-tasks__empty pa-8 d-flex flex-column align-center" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.Inbox" Size="Size.Large" Color="Color.Secondary" />
+                    <MudText Typo="Typo.body1" Class="mt-2">@L["heartbeat.tasks.empty"]</MudText>
+                </MudPaper>
+            }
+            else
+            {
+                <div class="hb-task-grid">
+                    @for (var i = 0; i < _config.Tasks.Count; i++)
+                    {
+                        var index = i;
+                        var task = _config.Tasks[index];
+                        <MudCard Class="hb-task" Elevation="0">
+                            <div class="hb-task__bar"></div>
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <span class="hb-task__no">#@(index + 1).pulse</span>
+                                </CardHeaderContent>
+                                <CardHeaderActions>
+                                    <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                                   Color="Color.Error"
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => RemoveTask(index))" />
+                                </CardHeaderActions>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudTextField T="string"
+                                              Value="task.Name"
+                                              ValueChanged="@(v => UpdateTask(index, task with { Name = v }))"
+                                              Label="@L["heartbeat.task.name"]"
+                                              Variant="Variant.Outlined"
+                                              Margin="Margin.Dense" />
+                                <MudTextField T="string"
+                                              Value="task.Prompt"
+                                              ValueChanged="@(v => UpdateTask(index, task with { Prompt = v }))"
+                                              Label="@L["heartbeat.task.prompt"]"
+                                              Variant="Variant.Outlined"
+                                              Lines="4"
+                                              Margin="Margin.Dense"
+                                              Class="mt-3" />
+                                <MudSelect T="string"
+                                           Value="task.Template"
+                                           ValueChanged="@(v => UpdateTask(index, task with { Template = v }))"
+                                           Label="@L["heartbeat.task.template"]"
+                                           Variant="Variant.Outlined"
+                                           Margin="Margin.Dense"
+                                           Class="mt-3">
+                                    <MudSelectItem T="string" Value="@("default")">default</MudSelectItem>
+                                    <MudSelectItem T="string" Value="@("summary")">summary</MudSelectItem>
+                                    <MudSelectItem T="string" Value="@("digest")">digest</MudSelectItem>
+                                    <MudSelectItem T="string" Value="@("scan")">scan</MudSelectItem>
+                                </MudSelect>
+                            </MudCardContent>
+                        </MudCard>
+                    }
+                </div>
+            }
+        </section>
+    }
+</div>
+
+<style>
+    .hb-shell {
+        --hb-ink: var(--mud-palette-text-primary);
+        --hb-mute: var(--mud-palette-text-secondary);
+        --hb-line: var(--mud-palette-lines-default);
+        --hb-accent: #f43f5e;
+        --hb-accent-soft: rgba(244, 63, 94, 0.18);
+        font-family: 'Iosevka', 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 8px 4px 64px;
+    }
+
+    .hb-hero {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 32px;
+        align-items: end;
+        padding: 28px 4px 22px;
+        border-bottom: 1px solid var(--hb-line);
+        margin-bottom: 28px;
+    }
+
+    .hb-eyebrow {
+        font-size: 11px;
+        letter-spacing: 0.32em;
+        text-transform: uppercase;
+        color: var(--hb-mute);
+    }
+
+    .hb-title {
+        font-family: 'Fraunces', 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+        font-size: clamp(40px, 6vw, 72px);
+        line-height: 0.95;
+        margin: 8px 0 14px;
+        font-weight: 400;
+        letter-spacing: -0.02em;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 18px;
+    }
+
+    .hb-title__beat { color: var(--hb-ink); }
+
+    .hb-title__rhythm {
+        font-family: 'Iosevka', monospace;
+        font-size: 12px;
+        letter-spacing: 0.4em;
+        text-transform: uppercase;
+        color: var(--hb-accent);
+        padding: 6px 12px;
+        border: 1px solid var(--hb-accent);
+        border-radius: 999px;
+    }
+
+    .hb-lede {
+        font-family: 'Fraunces', serif;
+        font-style: italic;
+        font-size: 17px;
+        max-width: 56ch;
+        color: var(--hb-mute);
+        margin: 0;
+    }
+
+    .hb-hero__pulse {
+        position: relative;
+        width: 140px;
+        height: 140px;
+        display: grid;
+        place-items: center;
+    }
+
+    .hb-pulse-core {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #f43f5e, #f59e0b);
+        display: grid;
+        place-items: center;
+        color: #fff;
+        box-shadow: 0 14px 40px rgba(244, 63, 94, 0.35);
+        z-index: 2;
+    }
+
+    .hb-pulse-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 1px solid var(--hb-accent);
+        opacity: 0;
+    }
+
+    .hb-hero__pulse[data-active="true"] .hb-pulse-ring {
+        animation: hb-pulse 2.4s cubic-bezier(.22,1,.36,1) infinite;
+    }
+
+    .hb-hero__pulse[data-active="true"] .hb-pulse-ring--delay {
+        animation-delay: 1.2s;
+    }
+
+    @@keyframes hb-pulse {
+        0% { transform: scale(0.55); opacity: 0.85; }
+        100% { transform: scale(1.4); opacity: 0; }
+    }
+
+    .hb-grid {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr;
+        gap: 24px;
+        margin-bottom: 36px;
+    }
+
+    @@media (max-width: 960px) {
+        .hb-hero { grid-template-columns: 1fr; }
+        .hb-grid { grid-template-columns: 1fr; }
+    }
+
+    .hb-card {
+        border: 1px solid var(--hb-line);
+        border-radius: 4px;
+        padding: 22px 26px 26px;
+        background:
+            linear-gradient(180deg, rgba(244,63,94,0.04), transparent 40%),
+            var(--mud-palette-surface);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .hb-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0; height: 2px;
+        background: linear-gradient(90deg, transparent, var(--hb-accent) 30%, var(--hb-accent) 70%, transparent);
+        opacity: 0.7;
+    }
+
+    .hb-card__head {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        margin-bottom: 18px;
+    }
+
+    .hb-card__index {
+        font-family: 'Iosevka', monospace;
+        font-size: 11px;
+        color: var(--hb-accent);
+        letter-spacing: 0.2em;
+    }
+
+    .hb-card__head h2 {
+        font-family: 'Fraunces', serif;
+        font-size: 22px;
+        margin: 0;
+        font-weight: 400;
+        letter-spacing: -0.01em;
+    }
+
+    .hb-card__rule {
+        flex: 1;
+        height: 1px;
+        background: repeating-linear-gradient(90deg, var(--hb-line), var(--hb-line) 4px, transparent 4px, transparent 8px);
+    }
+
+    .hb-row--switch {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 0;
+        border-bottom: 1px dashed var(--hb-line);
+    }
+
+    .hb-cost {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border: 1px solid var(--hb-line);
+        border-left: 3px solid var(--hb-accent);
+        background: rgba(244,63,94,0.04);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-family: 'Iosevka', monospace;
+        font-size: 13px;
+    }
+
+    .hb-cost__label { color: var(--hb-mute); letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; }
+    .hb-cost__value { color: var(--hb-ink); font-weight: 600; }
+
+    .hb-status { display: grid; gap: 14px; }
+
+    .hb-status__chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 16px;
+        border: 1px solid var(--hb-line);
+        border-radius: 999px;
+        font-family: 'Iosevka', monospace;
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        width: max-content;
+    }
+
+    .hb-status__dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--hb-mute);
+    }
+
+    .hb-status__chip[data-state="on"] {
+        border-color: #22c55e;
+        color: #22c55e;
+    }
+    .hb-status__chip[data-state="on"] .hb-status__dot {
+        background: #22c55e;
+        box-shadow: 0 0 0 4px rgba(34,197,94,0.18);
+        animation: hb-blip 1.6s ease-in-out infinite;
+    }
+    @@keyframes hb-blip { 50% { box-shadow: 0 0 0 8px rgba(34,197,94,0); } }
+
+    .hb-status__times {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+    .hb-status__times > div {
+        padding: 10px 12px;
+        border: 1px solid var(--hb-line);
+        background: var(--mud-palette-background);
+    }
+    .hb-status__k { display:block; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--hb-mute); }
+    .hb-status__v { display:block; font-family: 'Iosevka', monospace; font-size: 13px; margin-top: 4px; color: var(--hb-ink); }
+
+    .hb-pulse-btn { letter-spacing: 0.1em; text-transform: uppercase; font-size: 12px; }
+
+    .hb-events { margin-top: 22px; }
+    .hb-events__head {
+        display: flex; justify-content: space-between; align-items: center;
+        font-family: 'Iosevka', monospace;
+        font-size: 11px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--hb-mute);
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--hb-line);
+        margin-bottom: 6px;
+    }
+    .hb-events__count {
+        background: var(--hb-accent-soft);
+        color: var(--hb-accent);
+        padding: 2px 10px;
+        border-radius: 999px;
+        letter-spacing: 0.05em;
+    }
+    .hb-empty { padding: 18px; text-align:center; color: var(--hb-mute); font-style: italic; }
+    .hb-table th { font-family: 'Iosevka', monospace; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--hb-mute); }
+    .hb-evtype { font-family: 'Iosevka', monospace; font-size: 12px; padding: 2px 8px; border: 1px solid var(--hb-line); border-radius: 3px; }
+    .hb-evdetails { font-family: 'Iosevka', monospace; font-size: 12px; color: var(--hb-mute); }
+
+    .hb-tasks__head {
+        display: flex; justify-content: space-between; align-items: end; gap: 24px; flex-wrap: wrap;
+        padding: 18px 0; border-bottom: 1px solid var(--hb-line); margin-bottom: 22px;
+    }
+    .hb-tasks__head h2 { font-family: 'Fraunces', serif; font-size: 26px; margin: 4px 0 4px; font-weight: 400; }
+    .hb-tasks__head p { margin: 0; color: var(--hb-mute); font-style: italic; }
+    .hb-tasks__actions { display: flex; gap: 12px; }
+
+    .hb-task-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px;
+    }
+    .hb-task {
+        position: relative;
+        border: 1px solid var(--hb-line) !important;
+        background: var(--mud-palette-surface);
+        transition: transform .25s ease, border-color .25s ease;
+    }
+    .hb-task:hover { transform: translateY(-2px); border-color: var(--hb-accent) !important; }
+    .hb-task__bar {
+        position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+        background: linear-gradient(180deg, var(--hb-accent), transparent);
+    }
+    .hb-task__no {
+        font-family: 'Iosevka', monospace; font-size: 11px; letter-spacing: 0.2em;
+        text-transform: uppercase; color: var(--hb-accent);
+    }
+    .hb-tasks__empty { border: 1px dashed var(--hb-line); background: transparent; }
+</style>
+
+@code {
+    private HeartbeatConfig _config = new(false, "", new List<HeartbeatTask>());
+    private HeartbeatStatus? _heartbeatStatus;
+    private PulseStatus? _pulseStatus;
+    private List<PulseEvent>? _pulseEvents;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _triggering;
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        if (Auth.HasRole("operator"))
+        {
+            await LoadData();
+        }
+        else
+        {
+            _loading = false;
+        }
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        try
+        {
+            var cfg = await Api.GetAsync<HeartbeatConfig>("admin/heartbeat");
+            if (cfg is not null)
+            {
+                _config = cfg with { Tasks = cfg.Tasks ?? new List<HeartbeatTask>() };
+            }
+
+            _heartbeatStatus = await Api.GetAsync<HeartbeatStatus>("admin/heartbeat/status");
+            _pulseStatus = await Api.GetAsync<PulseStatus>("admin/pulse/status");
+            var pulseEvents = await Api.GetAsync<PulseEventListResponse>("admin/pulse/events");
+            _pulseEvents = pulseEvents?.Items ?? new List<PulseEvent>();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"{L["heartbeat.load.failed"]}: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void AddTask()
+    {
+        _config.Tasks?.Add(new HeartbeatTask(null, null, null, null));
+    }
+
+    private void RemoveTask(int index)
+    {
+        if (_config.Tasks is null) return;
+        if (index < 0 || index >= _config.Tasks.Count) return;
+        _config.Tasks.RemoveAt(index);
+    }
+
+    private void UpdateTask(int index, HeartbeatTask updated)
+    {
+        if (_config.Tasks is null) return;
+        if (index < 0 || index >= _config.Tasks.Count) return;
+        _config.Tasks[index] = updated;
+    }
+
+    private async Task SaveConfig()
+    {
+        _saving = true;
+        try
+        {
+            using var resp = await Api.PostRawAsync("admin/heartbeat", _config);
+            if (resp.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["heartbeat.save.ok"], Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"{L["heartbeat.save.failed"]} ({(int)resp.StatusCode})", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"{L["heartbeat.save.failed"]}: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task TriggerPulse()
+    {
+        _triggering = true;
+        try
+        {
+            using var resp = await Api.PostRawAsync("admin/pulse/run", new { });
+            if (resp.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["heartbeat.trigger.ok"], Severity.Success);
+                _pulseStatus = await Api.GetAsync<PulseStatus>("admin/pulse/status");
+                var pulseEvents = await Api.GetAsync<PulseEventListResponse>("admin/pulse/events");
+            _pulseEvents = pulseEvents?.Items ?? new List<PulseEvent>();
+            }
+            else
+            {
+                Snackbar.Add($"{L["heartbeat.trigger.failed"]} ({(int)resp.StatusCode})", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"{L["heartbeat.trigger.failed"]}: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _triggering = false;
+        }
+    }
+
+    private static string FormatTime(DateTime? value)
+        => value.HasValue ? value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "—";
+
+    private static string FormatTime(DateTimeOffset? value)
+        => value.HasValue ? value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "—";
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}

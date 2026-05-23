@@ -277,6 +277,118 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task SharedHarnessState_AdminApi_RequiresAuthAndSupportsCreateListDetailAndConflicts()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+
+        var anonymousResponse = await harness.Client.GetAsync("/admin/harness/shared-state");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousResponse.StatusCode);
+
+        var viewerToken = CreateOperatorToken(harness, OperatorRoleNames.Viewer, "shared-state-viewer");
+        using var viewerListRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/harness/shared-state");
+        viewerListRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", viewerToken);
+        var viewerListResponse = await harness.Client.SendAsync(viewerListRequest);
+        Assert.Equal(HttpStatusCode.OK, viewerListResponse.StatusCode);
+
+        using var viewerCreateRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/harness/shared-state")
+        {
+            Content = JsonContent("""{"goal":"viewer cannot create"}""")
+        };
+        viewerCreateRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", viewerToken);
+        var viewerCreateResponse = await harness.Client.SendAsync(viewerCreateRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, viewerCreateResponse.StatusCode);
+
+        var (cookie, csrfToken) = await LoginAsync(harness.Client, harness.AuthToken);
+        var stateJson = JsonSerializer.Serialize(new SharedHarnessState
+        {
+            Id = "shs_admin",
+            SessionId = "session-shared",
+            ParentSessionId = "session-parent",
+            HarnessContractId = "hctr_shared",
+            Goal = "Coordinate delegated test work",
+            Tags = ["shared"]
+        }, CoreJsonContext.Default.SharedHarnessState);
+
+        using var missingCsrfRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/harness/shared-state")
+        {
+            Content = JsonContent(stateJson)
+        };
+        missingCsrfRequest.Headers.Add("Cookie", cookie);
+        var missingCsrfResponse = await harness.Client.SendAsync(missingCsrfRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, missingCsrfResponse.StatusCode);
+
+        using var createRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/harness/shared-state")
+        {
+            Content = JsonContent(stateJson)
+        };
+        createRequest.Headers.Add("Cookie", cookie);
+        createRequest.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+        var createResponse = await harness.Client.SendAsync(createRequest);
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        using var createPayload = await ReadJsonAsync(createResponse);
+        Assert.True(createPayload.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("shs_admin", createPayload.RootElement.GetProperty("state").GetProperty("id").GetString());
+
+        using var detailRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/harness/shared-state/shs_admin");
+        detailRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var detailResponse = await harness.Client.SendAsync(detailRequest);
+        Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+        using var detailPayload = await ReadJsonAsync(detailResponse);
+        Assert.Equal("session-shared", detailPayload.RootElement.GetProperty("state").GetProperty("sessionId").GetString());
+
+        using var bySessionRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/sessions/session-shared/harness-state");
+        bySessionRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var bySessionResponse = await harness.Client.SendAsync(bySessionRequest);
+        Assert.Equal(HttpStatusCode.OK, bySessionResponse.StatusCode);
+
+        using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/harness/shared-state?sessionId=session-shared&tag=shared");
+        listRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var listResponse = await harness.Client.SendAsync(listRequest);
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        using var listPayload = await ReadJsonAsync(listResponse);
+        Assert.Single(listPayload.RootElement.GetProperty("items").EnumerateArray());
+
+        using var participantRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/harness/shared-state/shs_admin/participants")
+        {
+            Content = JsonContent("""{"id":"coder","role":"coder","sessionId":"session-coder"}""")
+        };
+        participantRequest.Headers.Add("Cookie", cookie);
+        participantRequest.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+        var participantResponse = await harness.Client.SendAsync(participantRequest);
+        Assert.Equal(HttpStatusCode.OK, participantResponse.StatusCode);
+
+        using var firstActionRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/harness/shared-state/shs_admin/actions")
+        {
+            Content = JsonContent("""{"id":"write-a","participantId":"coder","title":"Write A","writeSet":[{"kind":"file","path":"README.md"}]}""")
+        };
+        firstActionRequest.Headers.Add("Cookie", cookie);
+        firstActionRequest.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+        var firstActionResponse = await harness.Client.SendAsync(firstActionRequest);
+        Assert.Equal(HttpStatusCode.OK, firstActionResponse.StatusCode);
+
+        using var secondActionRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/harness/shared-state/shs_admin/actions")
+        {
+            Content = JsonContent("""{"id":"write-b","participantId":"coder","title":"Write B","writeSet":[{"kind":"file","path":"README.md"}]}""")
+        };
+        secondActionRequest.Headers.Add("Cookie", cookie);
+        secondActionRequest.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+        var secondActionResponse = await harness.Client.SendAsync(secondActionRequest);
+        Assert.Equal(HttpStatusCode.OK, secondActionResponse.StatusCode);
+
+        using var detectRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/harness/shared-state/shs_admin/detect-conflicts");
+        detectRequest.Headers.Add("Cookie", cookie);
+        detectRequest.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+        var detectResponse = await harness.Client.SendAsync(detectRequest);
+        Assert.Equal(HttpStatusCode.OK, detectResponse.StatusCode);
+        using var detectPayload = await ReadJsonAsync(detectResponse);
+        Assert.Single(detectPayload.RootElement.GetProperty("state").GetProperty("conflicts").EnumerateArray());
+
+        var events = harness.Runtime.Operations.RuntimeEvents.Query(new RuntimeEventQuery { Component = "harness", Limit = 20 });
+        Assert.Contains(events, item => item.Action == "shared_state_created" && item.CorrelationId == "shs_admin");
+        Assert.Contains(events, item => item.Action == "shared_state_conflicts_detected" && item.CorrelationId == "shs_admin");
+    }
+
+    [Fact]
     public async Task EvidenceBundles_AdminApi_RequiresAuthAndSupportsCreateListDetailAndAppend()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
@@ -1631,6 +1743,77 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task FractalMemory_AdminEndpoints_RequireAuthAndUseStructuredProvider()
+    {
+        var structuredProvider = new AdminFakeStructuredMemoryProvider();
+        await using var harness = await CreateHarnessAsync(
+            nonLoopbackBind: true,
+            configure: config =>
+            {
+                config.Memory.Fractal.Enabled = true;
+                config.Memory.Fractal.AutoContextMode = "manual";
+                config.Memory.Fractal.AllowWrites = false;
+            },
+            configureServices: (services, _) =>
+                services.AddSingleton<IStructuredMemoryProvider>(structuredProvider));
+
+        var anonymous = await harness.Client.GetAsync("/admin/memory/fractal/status");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+
+        using var statusRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/memory/fractal/status");
+        statusRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var statusResponse = await harness.Client.SendAsync(statusRequest);
+        Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
+        using var statusPayload = await ReadJsonAsync(statusResponse);
+        Assert.True(statusPayload.RootElement.GetProperty("enabled").GetBoolean());
+        Assert.True(statusPayload.RootElement.GetProperty("available").GetBoolean());
+
+        using var emptySearchRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/memory/fractal/search?query=%20%20");
+        emptySearchRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var emptySearchResponse = await harness.Client.SendAsync(emptySearchRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, emptySearchResponse.StatusCode);
+
+        using var searchRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/memory/fractal/search?query=%20context%20&limit=999&scope=%20project%20");
+        searchRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var searchResponse = await harness.Client.SendAsync(searchRequest);
+        Assert.Equal(HttpStatusCode.OK, searchResponse.StatusCode);
+        using var searchPayload = await ReadJsonAsync(searchResponse);
+        Assert.True(searchPayload.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("context", searchPayload.RootElement.GetProperty("query").GetString());
+        Assert.Equal("project", searchPayload.RootElement.GetProperty("scope").GetString());
+        Assert.Equal(50, structuredProvider.LastSearchLimit);
+        Assert.Equal("projects/admin", Assert.Single(searchPayload.RootElement.GetProperty("items").EnumerateArray()).GetProperty("path").GetString());
+
+        using var openRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/memory/fractal/open?path=%20projects/admin%20&depth=99&view=bad-view");
+        openRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var openResponse = await harness.Client.SendAsync(openRequest);
+        Assert.Equal(HttpStatusCode.OK, openResponse.StatusCode);
+        using var openPayload = await ReadJsonAsync(openResponse);
+        Assert.Equal("projects/admin", openPayload.RootElement.GetProperty("path").GetString());
+        Assert.Equal(3, openPayload.RootElement.GetProperty("depth").GetInt32());
+        Assert.Equal("index", openPayload.RootElement.GetProperty("view").GetString());
+
+        using var recentRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/memory/fractal/recent?days=0&limit=999&scope=%20workspace%20");
+        recentRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        var recentResponse = await harness.Client.SendAsync(recentRequest);
+        Assert.Equal(HttpStatusCode.OK, recentResponse.StatusCode);
+        using var recentPayload = await ReadJsonAsync(recentResponse);
+        Assert.Equal(1, recentPayload.RootElement.GetProperty("days").GetInt32());
+        Assert.Equal("workspace", recentPayload.RootElement.GetProperty("scope").GetString());
+        Assert.Equal(100, structuredProvider.LastRecentLimit);
+
+        var (cookie, csrfToken) = await LoginAsync(harness.Client, harness.AuthToken);
+        using var handoffRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/memory/fractal/handoff")
+        {
+            Content = JsonContent("""{"path":"projects/admin"}""")
+        };
+        handoffRequest.Headers.Add("Cookie", cookie);
+        handoffRequest.Headers.Add(BrowserSessionAuthService.CsrfHeaderName, csrfToken);
+        var handoffResponse = await harness.Client.SendAsync(handoffRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, handoffResponse.StatusCode);
+    }
+
+    [Fact]
     public async Task LearningProposalRollback_ProfileUpdate_RestoresPreviousProfile()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
@@ -1748,6 +1931,46 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task LearningService_SkillDraftProposal_IgnoresRepeatedSingleToolWorkflow()
+    {
+        var storagePath = Path.Join(Path.GetTempPath(), "openclaw-learning-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+        try
+        {
+            var store = new FileFeatureStore(storagePath);
+            var service = new LearningService(
+                new LearningConfig { SkillProposalThreshold = 2, AutomationProposalThreshold = 99 },
+                store,
+                store,
+                store,
+                new StaticSessionSearchStore([]),
+                NullLogger<LearningService>.Instance);
+            var session = new Session
+            {
+                Id = "sess-single-tool-repeat",
+                ChannelId = "web",
+                SenderId = "operator",
+                History =
+                [
+                    new ChatTurn { Role = "user", Content = "Check session history." },
+                    BuildAssistantToolTurn("sessions_history", "sessions_history", "sessions_history"),
+                    BuildAssistantToolTurn("sessions_history", "sessions_history", "sessions_history")
+                ]
+            };
+
+            await service.ObserveSessionAsync(session, CancellationToken.None);
+
+            var proposals = await store.ListProposalsAsync(LearningProposalStatus.Pending, LearningProposalKind.SkillDraft, CancellationToken.None);
+            Assert.Empty(proposals);
+        }
+        finally
+        {
+            if (Directory.Exists(storagePath))
+                Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task LearningService_AutomationSuggestion_DuplicateUpdatesPendingProposal()
     {
         var storagePath = Path.Join(Path.GetTempPath(), "openclaw-learning-tests", Guid.NewGuid().ToString("N"));
@@ -1777,9 +2000,9 @@ public sealed class GatewayAdminEndpointTests
             Assert.Equal("warning", proposal.ValidationStatus);
             Assert.True(proposal.Confidence >= 0.5f);
             Assert.Equal(3, proposal.RepeatedCount);
-            Assert.False(proposal.AutomationDraft!.Enabled);
-            Assert.True(proposal.AutomationDraft.IsDraft);
-            Assert.Equal("learning", proposal.AutomationDraft.Source);
+            Assert.Null(proposal.AutomationDraft);
+            Assert.Equal(AutomationSuggestionQualityDecisions.LearningOnly, proposal.AutomationQuality!.Decision);
+            Assert.NotNull(proposal.AutomationSuggestionPreview);
             Assert.Contains("sess-search-1", proposal.SourceSessionIds);
             Assert.Contains("sess-search-2", proposal.SourceSessionIds);
             Assert.Contains("sess-auto-1", proposal.SourceSessionIds);
@@ -2672,6 +2895,171 @@ public sealed class GatewayAdminEndpointTests
         Assert.False(rolledBackAutomation.Enabled);
         Assert.True(rolledBackAutomation.IsDraft);
         Assert.Equal("lp_rollback_automation", rolledBackAutomation.CreatedByLearningProposalId);
+    }
+
+    [Fact]
+    public async Task LearningProposalApprove_SkillDraft_WithReasoningMarkupRejectsWithValidationError()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        var store = new FileFeatureStore(harness.StoragePath);
+        var draft = """
+            </think>
+
+            ---
+            name: reasoning-leak-skill
+            description: Validate reasoning markup rejection
+            ---
+
+            Use when testing leaked reasoning markup rejection.
+            """;
+        await store.SaveProposalAsync(new LearningProposal
+        {
+            Id = "lp_reasoning_markup_skill",
+            Kind = LearningProposalKind.SkillDraft,
+            Status = LearningProposalStatus.Pending,
+            ActorId = "web:operator",
+            Title = "Reasoning markup skill draft",
+            Summary = "Leaked reasoning markup test.",
+            SkillName = "reasoning-leak-skill",
+            DraftContent = draft,
+            DraftContentHash = ComputeTestHash(draft)
+        }, CancellationToken.None);
+
+        using var approveRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/learning/proposals/lp_reasoning_markup_skill/approve");
+        approveRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        using var approveResponse = await harness.Client.SendAsync(approveRequest);
+        Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+        using var approvePayload = await ReadJsonAsync(approveResponse);
+        Assert.Equal("rejected", approvePayload.RootElement.GetProperty("status").GetString());
+        Assert.Equal("error", approvePayload.RootElement.GetProperty("validationStatus").GetString());
+        Assert.Contains(
+            approvePayload.RootElement.GetProperty("validationErrors").EnumerateArray().Select(static item => item.GetString()),
+            static error => error is not null && error.Contains("reasoning markup", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task LearningProposalApprove_SkillDraft_ReloadFailureApprovesAndReportsFailure()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        harness.Runtime.AgentRuntime.ReloadSkillsAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<IReadOnlyList<string>>>(_ => throw new InvalidOperationException("Skill reload failed."));
+
+        var store = new FileFeatureStore(harness.StoragePath);
+        var skillName = $"reload-failure-skill-{Guid.NewGuid():N}";
+        var skillsRoot = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openclaw", "skills");
+        var skillPath = Path.Join(skillsRoot, Path.GetFileName(skillName));
+        if (Directory.Exists(skillPath))
+            Directory.Delete(skillPath, recursive: true);
+
+        var draft = $"""
+            ---
+            name: {skillName}
+            description: Validate reload failure does not fail approval
+            ---
+
+            Use when testing approved learning skill reload failure handling.
+            """;
+
+        try
+        {
+            await store.SaveProposalAsync(new LearningProposal
+            {
+                Id = "lp_reload_failure_skill",
+                Kind = LearningProposalKind.SkillDraft,
+                Status = LearningProposalStatus.Pending,
+                ActorId = "web:operator",
+                Title = "Reload failure skill draft",
+                Summary = "Skill reload failure approval test.",
+                SkillName = skillName,
+                DraftContent = draft,
+                DraftContentHash = ComputeTestHash(draft),
+                RiskLevel = LearningProposalRiskLevels.High,
+                ValidationStatus = LearningProposalValidationStatuses.Warning,
+                ValidationWarnings = ["Observed tool sequence includes mutating tools."]
+            }, CancellationToken.None);
+
+            using var approveRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/learning/proposals/lp_reload_failure_skill/approve");
+            approveRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+            using var approveResponse = await harness.Client.SendAsync(approveRequest);
+            Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+            using var approvePayload = await ReadJsonAsync(approveResponse);
+            Assert.Equal("approved", approvePayload.RootElement.GetProperty("status").GetString());
+            Assert.Equal(skillPath, approvePayload.RootElement.GetProperty("managedSkillPath").GetString());
+            var metadata = approvePayload.RootElement.GetProperty("metadata");
+            Assert.Equal("true", metadata.GetProperty("reloadFailed").GetString());
+            Assert.Equal("Skill reload failed.", metadata.GetProperty("reloadError").GetString());
+            Assert.Equal("InvalidOperationException", metadata.GetProperty("reloadException").GetString());
+            Assert.True(File.Exists(Path.Join(skillPath, "SKILL.md")));
+
+            using var detailRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/learning/proposals/lp_reload_failure_skill");
+            detailRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+            using var detailResponse = await harness.Client.SendAsync(detailRequest);
+            Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+            using var detailPayload = await ReadJsonAsync(detailResponse);
+            var persistedMetadata = detailPayload.RootElement.GetProperty("proposal").GetProperty("metadata");
+            Assert.Equal("true", persistedMetadata.GetProperty("reloadFailed").GetString());
+            Assert.Equal("Skill reload failed.", persistedMetadata.GetProperty("reloadError").GetString());
+            Assert.Equal("InvalidOperationException", persistedMetadata.GetProperty("reloadException").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(skillPath))
+                Directory.Delete(skillPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LearningProposalApprove_SkillDraft_NullValidationCollectionsStillApprovesProposal()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        var store = new FileFeatureStore(harness.StoragePath);
+        var skillName = $"legacy-null-collections-skill-{Guid.NewGuid():N}";
+        var skillsRoot = Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openclaw", "skills");
+        var skillPath = Path.Join(skillsRoot, Path.GetFileName(skillName));
+        if (Directory.Exists(skillPath))
+            Directory.Delete(skillPath, recursive: true);
+
+        var draft = $"""
+            ---
+            name: {skillName}
+            description: Validate legacy null collection approval
+            ---
+
+            Use when testing legacy learning proposal approval.
+            """;
+
+        try
+        {
+            await store.SaveProposalAsync(new LearningProposal
+            {
+                Id = "lp_legacy_null_collections_skill",
+                Kind = LearningProposalKind.SkillDraft,
+                Status = LearningProposalStatus.Pending,
+                ActorId = "web:operator",
+                Title = "Legacy null collections skill draft",
+                Summary = "Legacy proposal approval test.",
+                SkillName = skillName,
+                DraftContent = draft,
+                DraftContentHash = ComputeTestHash(draft),
+                ValidationWarnings = null!,
+                ValidationErrors = null!,
+                ToolObservations = null!
+            }, CancellationToken.None);
+
+            using var approveRequest = new HttpRequestMessage(HttpMethod.Post, "/admin/learning/proposals/lp_legacy_null_collections_skill/approve");
+            approveRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+            using var approveResponse = await harness.Client.SendAsync(approveRequest);
+            Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+            using var approvePayload = await ReadJsonAsync(approveResponse);
+            Assert.Equal("approved", approvePayload.RootElement.GetProperty("status").GetString());
+            Assert.Equal(skillPath, approvePayload.RootElement.GetProperty("managedSkillPath").GetString());
+            Assert.True(File.Exists(Path.Join(skillPath, "SKILL.md")));
+        }
+        finally
+        {
+            if (Directory.Exists(skillPath))
+                Directory.Delete(skillPath, recursive: true);
+        }
     }
 
     [Fact]
@@ -7106,6 +7494,70 @@ public sealed class GatewayAdminEndpointTests
         {
             _secret = null;
         }
+    }
+
+    private sealed class AdminFakeStructuredMemoryProvider : IStructuredMemoryProvider
+    {
+        public int LastSearchLimit { get; private set; }
+        public int LastRecentLimit { get; private set; }
+
+        public Task<StructuredMemoryStatusResponse> GetStatusAsync(CancellationToken ct)
+            => Task.FromResult(new StructuredMemoryStatusResponse
+            {
+                Enabled = true,
+                Mode = "mcp",
+                ResolvedRepositoryRoot = "/tmp/fractal-admin",
+                McpCommand = "fractalmem-mcp",
+                AutoContextMode = "manual",
+                Available = true,
+                Status = "available"
+            });
+
+        public Task<StructuredMemorySearchResult> SearchAsync(string query, int limit, string? scope, CancellationToken ct)
+        {
+            LastSearchLimit = limit;
+            return Task.FromResult(new StructuredMemorySearchResult
+            {
+                Success = true,
+                Query = query,
+                Scope = scope,
+                Items =
+                [
+                    new StructuredMemorySourceRef
+                    {
+                        Path = "projects/admin",
+                        Title = "Admin node"
+                    }
+                ]
+            });
+        }
+
+        public Task<StructuredMemoryOpenResult> OpenAsync(string path, int depth, string view, CancellationToken ct)
+            => Task.FromResult(new StructuredMemoryOpenResult { Success = true, Path = path, Depth = depth, View = view, Content = "admin node" });
+
+        public Task<StructuredMemoryRecentResult> RecentAsync(int days, int limit, string? scope, CancellationToken ct)
+        {
+            LastRecentLimit = limit;
+            return Task.FromResult(new StructuredMemoryRecentResult
+            {
+                Success = true,
+                Days = days,
+                Scope = scope,
+                Items = [new StructuredMemorySourceRef { Path = "projects/admin" }]
+            });
+        }
+
+        public Task<StructuredMemoryExportResult> ExportAsync(string path, string mode, CancellationToken ct)
+            => Task.FromResult(new StructuredMemoryExportResult { Success = true, Path = path, Mode = mode, Content = "admin export" });
+
+        public Task<StructuredMemoryHandoffResult> CreateHandoffAsync(string path, CancellationToken ct)
+            => Task.FromResult(new StructuredMemoryHandoffResult { Success = true, Path = path, HandoffFilePath = $"{path}/handoff.md" });
+
+        public Task<StructuredMemoryValidationResult> ValidateAsync(CancellationToken ct)
+            => Task.FromResult(new StructuredMemoryValidationResult { Success = true, Summary = "ok" });
+
+        public Task<StructuredMemoryValidationResult> RefreshIndexAsync(CancellationToken ct)
+            => Task.FromResult(new StructuredMemoryValidationResult { Success = true, Summary = "refreshed" });
     }
 
     private sealed class FailingSaveMemoryStore(IMemoryStore inner) : IMemoryStore, ISessionAdminStore, ISessionSearchStore, IAsyncDisposable, IDisposable

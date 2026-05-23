@@ -1,0 +1,44 @@
+@*
+    Compact empty-state hint shared across data pages.
+    Renders a soft icon, a title, and an optional subtitle.
+*@
+
+<div class="empty-hint">
+    <div class="empty-hint__halo">
+        <MudIcon Icon="@Icon" Size="Size.Large" />
+    </div>
+    <MudText Typo="Typo.subtitle1" Class="empty-hint__title">@Title</MudText>
+    @if (!string.IsNullOrEmpty(Subtitle))
+    {
+        <MudText Typo="Typo.caption" Class="empty-hint__subtitle">@Subtitle</MudText>
+    }
+</div>
+
+<style>
+    .empty-hint {
+        display: flex; flex-direction: column; align-items: center;
+        padding: 56px 24px;
+        border: 1px dashed var(--mud-palette-lines-default);
+        border-radius: 12px;
+        background:
+            radial-gradient(circle at top, rgba(139,92,246,.05), transparent 65%);
+    }
+    .empty-hint__halo {
+        width: 64px; height: 64px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(139,92,246,.08);
+        color: var(--mud-palette-primary);
+        margin-bottom: 14px;
+    }
+    .empty-hint__title { font-weight: 600; }
+    .empty-hint__subtitle {
+        text-transform: uppercase; letter-spacing: .12em;
+        opacity: .6; margin-top: 4px;
+    }
+</style>
+
+@code {
+    [Parameter] public string Icon { get; set; } = Icons.Material.Filled.Inbox;
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string? Subtitle { get; set; }
+}

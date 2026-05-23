@@ -1,0 +1,569 @@
+@page "/channels"
+@implements IDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>@L["channels.title"] · OpenClaw</PageTitle>
+
+@if (!Auth.HasRole("operator"))
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="my-4">
+        @L["auth.notAuthenticated"]
+    </MudAlert>
+    return;
+}
+
+<div class="oc-page">
+    <header class="oc-page__head">
+        <div class="oc-kicker">SYS · 02 / TRANSPORT</div>
+        <h1 class="oc-page__title">@L["channels.title"]</h1>
+        <div class="oc-page__sub">@L["channels.channelList"] · @L["channels.allowlist"]</div>
+    </header>
+
+    <MudPaper Class="oc-panel" Elevation="0">
+        <div class="oc-panel__head">
+            <span class="oc-kicker oc-kicker--accent">A · CHANNELS</span>
+            <span class="oc-panel__title">@L["channels.channelList"]</span>
+            <MudSpacer />
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                           Size="Size.Small"
+                           OnClick="LoadChannels"
+                           title="@L["common.refresh"]" />
+        </div>
+        <div class="oc-panel__body oc-panel__body--flush">
+            <MudDataGrid T="ChannelInfo"
+                         Items="_channels"
+                         Loading="_loadingChannels"
+                         Dense="true"
+                         Hover="true"
+                         Bordered="false"
+                         Striped="false"
+                         FixedHeader="true"
+                         Height="320px">
+                <Columns>
+                    <PropertyColumn Property="x => x.Id" Title="ID" />
+                    <PropertyColumn Property="x => x.Type" Title="@L["channels.channelType"]">
+                        <CellTemplate>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">
+                                @context.Item.Type
+                            </MudChip>
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.Status" Title="@L["channels.channelStatus"]">
+                        <CellTemplate>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@StatusColor(context.Item.Status)">
+                                @(context.Item.Status ?? "unknown")
+                            </MudChip>
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <TemplateColumn Title="@L["common.actions"]">
+                        <CellTemplate>
+                            @if (IsWhatsApp(context.Item))
+                            {
+                                <div class="oc-channel-actions">
+                                    <MudSwitch T="bool"
+                                               Value="@IsChannelEnabled(context.Item)"
+                                               ValueChanged="@(value => SaveWhatsAppSetup(value))"
+                                               Color="Color.Success"
+                                               Disabled="_savingWhatsApp" />
+                                    <MudButton Variant="Variant.Outlined"
+                                               Size="Size.Small"
+                                               StartIcon="@Icons.Material.Filled.Settings"
+                                               OnClick="@(() => ConfigureChannel(context.Item))">
+                                        @L["channels.configure"]
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Text"
+                                               Size="Size.Small"
+                                               Color="Color.Warning"
+                                               StartIcon="@Icons.Material.Filled.RestartAlt"
+                                               Disabled="_savingWhatsApp"
+                                               OnClick="RestartWhatsApp">
+                                        @L["whatsapp.restartAuth"]
+                                    </MudButton>
+                                </div>
+                            }
+                            else
+                            {
+                                <span class="oc-muted">@L["channels.noActions"]</span>
+                            }
+                        </CellTemplate>
+                    </TemplateColumn>
+                </Columns>
+                <NoRecordsContent>
+                    <div class="oc-empty">@L["common.noData"]</div>
+                </NoRecordsContent>
+            </MudDataGrid>
+        </div>
+    </MudPaper>
+
+    @if (_selectedChannel is not null)
+    {
+        <MudPaper Class="oc-panel" Elevation="0">
+            <div class="oc-panel__head">
+                <span class="oc-kicker oc-kicker--accent">B · CONFIG</span>
+                <span class="oc-panel__title">@L["channels.configure"] · @_selectedChannel.Id</span>
+                <MudSpacer />
+                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                               Size="Size.Small"
+                               OnClick="CloseChannelConfig"
+                               title="@L["common.close"]" />
+            </div>
+            <div class="oc-panel__body">
+                @if (_loadingWhatsAppSetup)
+                {
+                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-2" />
+                }
+                else if (IsWhatsApp(_selectedChannel))
+                {
+                    <div class="oc-config-grid">
+                        <MudSwitch T="bool" @bind-Value="_whatsAppEnabled"
+                                   Color="Color.Success"
+                                   Label="@L["common.enable"]" />
+                        <MudSelect T="string" @bind-Value="_whatsAppType"
+                                   Label="@L["whatsapp.connectionType"]"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense">
+                            <MudSelectItem Value="@("official")">@L["whatsapp.cloud"]</MudSelectItem>
+                            <MudSelectItem Value="@("built_in_bridge")">@L["whatsapp.multidevice"]</MudSelectItem>
+                        </MudSelect>
+                        <MudTextField T="string" @bind-Value="_whatsAppWebhookPath"
+                                      Label="@L["whatsapp.webhookPath"]"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense" />
+                        <MudTextField T="string" @bind-Value="_whatsAppPhoneNumberId"
+                                      Label="@L["whatsapp.phoneNumberId"]"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense" />
+                        <MudTextField T="string" @bind-Value="_whatsAppBusinessAccountId"
+                                      Label="@L["whatsapp.businessAccountId"]"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense" />
+                    </div>
+                    <div class="oc-actionbar">
+                        <MudSpacer />
+                        <MudButton Variant="Variant.Text"
+                                   OnClick="CloseChannelConfig">
+                            @L["common.cancel"]
+                        </MudButton>
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Save"
+                                   Disabled="_savingWhatsApp"
+                                   OnClick="@(() => SaveWhatsAppSetup(_whatsAppEnabled))">
+                            @L["common.save"]
+                        </MudButton>
+                    </div>
+                }
+            </div>
+        </MudPaper>
+    }
+
+    <MudPaper Class="oc-panel" Elevation="0">
+        <div class="oc-panel__head">
+            <span class="oc-kicker oc-kicker--accent">C · ALLOWLIST</span>
+            <span class="oc-panel__title">@L["channels.allowlist"]</span>
+            <MudSpacer />
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                           Size="Size.Small"
+                           OnClick="LoadAllowlist"
+                           title="@L["common.refresh"]" />
+        </div>
+        <div class="oc-panel__body">
+            <MudDataGrid T="AllowlistEntry"
+                         Items="_allowlist"
+                         Loading="_loadingAllowlist"
+                         Dense="true"
+                         Hover="true"
+                         FixedHeader="true"
+                         Height="280px">
+                <Columns>
+                    <PropertyColumn Property="x => x.Channel" Title="@L["integration.channel"]" />
+                    <PropertyColumn Property="x => x.SenderId" Title="@L["channels.senderId"]">
+                        <CellTemplate>
+                            <span class="oc-mono">@context.Item.SenderId</span>
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.Label" Title="@L["channels.label"]" />
+                </Columns>
+                <NoRecordsContent>
+                    <div class="oc-empty">@L["common.noData"]</div>
+                </NoRecordsContent>
+            </MudDataGrid>
+        </div>
+    </MudPaper>
+</div>
+
+<style>
+    .oc-page { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+    .oc-page__head { padding: 0 0 1.5rem 0; border-bottom: 1px solid var(--mud-palette-lines-default); margin-bottom: 0.5rem; }
+    .oc-page__title { font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; margin: 0.25rem 0 0; }
+    .oc-page__sub { color: var(--mud-palette-text-secondary); font-size: 0.9rem; margin-top: 0.25rem; }
+    .oc-kicker { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--mud-palette-text-secondary); }
+    .oc-kicker--accent { color: var(--mud-palette-primary); }
+    .oc-panel { border: 1px solid var(--mud-palette-lines-default); border-radius: 4px; overflow: hidden; background: var(--mud-palette-surface); }
+    .oc-panel__head { display: flex; align-items: center; gap: 0.75rem; padding: 0.85rem 1.1rem; border-bottom: 1px solid var(--mud-palette-lines-default); background: linear-gradient(180deg, rgba(14,165,233,0.04), transparent); }
+    .oc-panel__title { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+    .oc-panel__body { padding: 1.1rem; display: flex; flex-direction: column; gap: 1rem; }
+    .oc-panel__body--flush { padding: 0; }
+    .oc-mono { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; }
+    .oc-muted { color: var(--mud-palette-text-secondary); font-size: 0.85rem; }
+    .oc-channel-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .oc-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem; align-items: center; }
+    .oc-actionbar { display: flex; align-items: center; gap: 0.5rem; }
+    .oc-empty { padding: 2rem; text-align: center; color: var(--mud-palette-text-secondary); font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; letter-spacing: 0.1em; text-transform: uppercase; }
+</style>
+
+@code {
+    private List<ChannelInfo> _channels = new();
+    private List<AllowlistEntry> _allowlist = new();
+    private ChannelInfo? _selectedChannel;
+    private bool _loadingChannels;
+    private bool _loadingAllowlist;
+    private bool _loadingWhatsAppSetup;
+    private bool _savingWhatsApp;
+    private bool _whatsAppEnabled;
+    private string _whatsAppType = "official";
+    private string _whatsAppWebhookPath = "/whatsapp/inbound";
+    private string _whatsAppPhoneNumberId = string.Empty;
+    private string _whatsAppBusinessAccountId = string.Empty;
+    private string _whatsAppDmPolicy = "pairing";
+    private string? _whatsAppWebhookPublicBaseUrl;
+    private string _whatsAppWebhookVerifyToken = string.Empty;
+    private string _whatsAppWebhookVerifyTokenRef = "env:WHATSAPP_VERIFY_TOKEN";
+    private bool _whatsAppValidateSignature;
+    private string? _whatsAppWebhookAppSecret;
+    private string _whatsAppWebhookAppSecretRef = "env:WHATSAPP_APP_SECRET";
+    private string? _whatsAppCloudApiToken;
+    private string _whatsAppCloudApiTokenRef = "env:WHATSAPP_CLOUD_API_TOKEN";
+    private string? _whatsAppBridgeUrl;
+    private string? _whatsAppBridgeToken;
+    private string _whatsAppBridgeTokenRef = "env:WHATSAPP_BRIDGE_TOKEN";
+    private bool _whatsAppBridgeSuppressSendExceptions;
+    private string? _whatsAppPluginId;
+    private string? _whatsAppPluginConfigJson;
+    private string? _whatsAppFirstPartyWorkerConfigJson;
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        if (!Auth.HasRole("operator"))
+        {
+            return;
+        }
+
+        await LoadChannels();
+        await LoadAllowlist();
+    }
+
+    private async Task LoadChannels()
+    {
+        _loadingChannels = true;
+        try
+        {
+            using var response = await Api.GetRawAsync("admin/setup/status");
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+                return;
+            }
+
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+            _channels = ParseChannels(doc.RootElement);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loadingChannels = false;
+        }
+    }
+
+    private static List<ChannelInfo> ParseChannels(System.Text.Json.JsonElement root)
+    {
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object
+            || !root.TryGetProperty("channelReadiness", out var array)
+            || array.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return new List<ChannelInfo>();
+        }
+
+        var list = new List<ChannelInfo>();
+        foreach (var item in array.EnumerateArray())
+        {
+            var id = ReadString(item, "channelId");
+            var type = ReadString(item, "displayName") ?? ReadString(item, "mode");
+            var status = ReadString(item, "status");
+            var enabled = ReadBool(item, "enabled") ?? false;
+            list.Add(new ChannelInfo(id, type, status, enabled, null));
+        }
+
+        return list;
+    }
+
+    private async Task LoadAllowlist()
+    {
+        _loadingAllowlist = true;
+        try
+        {
+            var entries = new List<AllowlistEntry>();
+            foreach (var channel in _channels)
+            {
+                if (string.IsNullOrWhiteSpace(channel.Id))
+                {
+                    continue;
+                }
+
+                using var response = await Api.GetRawAsync($"allowlists/{Uri.EscapeDataString(channel.Id)}");
+                if (!response.IsSuccessStatusCode)
+                {
+                    continue;
+                }
+
+                using var stream = await response.Content.ReadAsStreamAsync();
+                using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+                entries.AddRange(ParseAllowlist(doc.RootElement));
+            }
+
+            _allowlist = entries;
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loadingAllowlist = false;
+        }
+    }
+
+    private static List<AllowlistEntry> ParseAllowlist(System.Text.Json.JsonElement root)
+    {
+        var channel = ReadString(root, "channelId");
+        if (string.IsNullOrWhiteSpace(channel)
+            || root.ValueKind != System.Text.Json.JsonValueKind.Object
+            || !root.TryGetProperty("effective", out var effective)
+            || effective.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            return new List<AllowlistEntry>();
+        }
+
+        var list = new List<AllowlistEntry>();
+        AddAllowlistValues(list, channel, effective, "allowedFrom", "from");
+        AddAllowlistValues(list, channel, effective, "allowedTo", "to");
+        return list;
+    }
+
+    private static void AddAllowlistValues(
+        List<AllowlistEntry> list,
+        string channel,
+        System.Text.Json.JsonElement root,
+        string propertyName,
+        string label)
+    {
+        if (!root.TryGetProperty(propertyName, out var values)
+            || values.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var value in values.EnumerateArray())
+        {
+            if (value.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
+            {
+                list.Add(new AllowlistEntry(channel, value.GetString(), label));
+            }
+        }
+    }
+
+    private async Task ConfigureChannel(ChannelInfo channel)
+    {
+        _selectedChannel = channel;
+        if (IsWhatsApp(channel))
+        {
+            await LoadWhatsAppSetup();
+        }
+    }
+
+    private void CloseChannelConfig()
+    {
+        _selectedChannel = null;
+    }
+
+    private async Task LoadWhatsAppSetup()
+    {
+        _loadingWhatsAppSetup = true;
+        try
+        {
+            using var response = await Api.GetRawAsync("admin/channels/whatsapp/setup");
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+                return;
+            }
+
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+            ApplyWhatsAppSetup(doc.RootElement);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loadingWhatsAppSetup = false;
+        }
+    }
+
+    private void ApplyWhatsAppSetup(System.Text.Json.JsonElement root)
+    {
+        _whatsAppEnabled = ReadBool(root, "enabled") ?? false;
+        _whatsAppType = ReadString(root, "configuredType") ?? ReadString(root, "type") ?? "official";
+        _whatsAppDmPolicy = ReadString(root, "dmPolicy") ?? "pairing";
+        _whatsAppWebhookPath = ReadString(root, "webhookPath") ?? "/whatsapp/inbound";
+        _whatsAppWebhookPublicBaseUrl = ReadString(root, "webhookPublicBaseUrl");
+        _whatsAppWebhookVerifyToken = ReadString(root, "webhookVerifyToken") ?? string.Empty;
+        _whatsAppWebhookVerifyTokenRef = ReadString(root, "webhookVerifyTokenRef") ?? "env:WHATSAPP_VERIFY_TOKEN";
+        _whatsAppValidateSignature = ReadBool(root, "validateSignature") ?? false;
+        _whatsAppWebhookAppSecret = ReadString(root, "webhookAppSecret");
+        _whatsAppWebhookAppSecretRef = ReadString(root, "webhookAppSecretRef") ?? "env:WHATSAPP_APP_SECRET";
+        _whatsAppCloudApiToken = ReadString(root, "cloudApiToken");
+        _whatsAppCloudApiTokenRef = ReadString(root, "cloudApiTokenRef") ?? "env:WHATSAPP_CLOUD_API_TOKEN";
+        _whatsAppPhoneNumberId = ReadString(root, "phoneNumberId") ?? string.Empty;
+        _whatsAppBusinessAccountId = ReadString(root, "businessAccountId") ?? string.Empty;
+        _whatsAppBridgeUrl = ReadString(root, "bridgeUrl");
+        _whatsAppBridgeToken = ReadString(root, "bridgeToken");
+        _whatsAppBridgeTokenRef = ReadString(root, "bridgeTokenRef") ?? "env:WHATSAPP_BRIDGE_TOKEN";
+        _whatsAppBridgeSuppressSendExceptions = ReadBool(root, "bridgeSuppressSendExceptions") ?? false;
+        _whatsAppPluginId = ReadString(root, "pluginId");
+        _whatsAppPluginConfigJson = ReadString(root, "pluginConfigJson");
+        _whatsAppFirstPartyWorkerConfigJson = ReadString(root, "firstPartyWorkerConfigJson");
+    }
+
+    private async Task SaveWhatsAppSetup(bool enabled)
+    {
+        _savingWhatsApp = true;
+        _whatsAppEnabled = enabled;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_whatsAppWebhookPath))
+            {
+                await LoadWhatsAppSetup();
+                _whatsAppEnabled = enabled;
+            }
+
+            using var response = await Api.PutRawAsync("admin/channels/whatsapp/setup", new
+            {
+                enabled = _whatsAppEnabled,
+                type = _whatsAppType,
+                dmPolicy = _whatsAppDmPolicy,
+                webhookPath = _whatsAppWebhookPath,
+                webhookPublicBaseUrl = _whatsAppWebhookPublicBaseUrl,
+                webhookVerifyToken = _whatsAppWebhookVerifyToken,
+                webhookVerifyTokenRef = _whatsAppWebhookVerifyTokenRef,
+                validateSignature = _whatsAppValidateSignature,
+                webhookAppSecret = _whatsAppWebhookAppSecret,
+                webhookAppSecretRef = _whatsAppWebhookAppSecretRef,
+                cloudApiToken = _whatsAppCloudApiToken,
+                cloudApiTokenRef = _whatsAppCloudApiTokenRef,
+                phoneNumberId = string.IsNullOrWhiteSpace(_whatsAppPhoneNumberId) ? null : _whatsAppPhoneNumberId,
+                businessAccountId = string.IsNullOrWhiteSpace(_whatsAppBusinessAccountId) ? null : _whatsAppBusinessAccountId,
+                bridgeUrl = _whatsAppBridgeUrl,
+                bridgeToken = _whatsAppBridgeToken,
+                bridgeTokenRef = _whatsAppBridgeTokenRef,
+                bridgeSuppressSendExceptions = _whatsAppBridgeSuppressSendExceptions,
+                pluginId = _whatsAppPluginId,
+                pluginConfigJson = _whatsAppPluginConfigJson,
+                firstPartyWorkerConfigJson = _whatsAppFirstPartyWorkerConfigJson
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+                using var stream = await response.Content.ReadAsStreamAsync();
+                using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+                ApplyWhatsAppSetup(doc.RootElement);
+                await LoadChannels();
+                await LoadAllowlist();
+            }
+            else
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _savingWhatsApp = false;
+        }
+    }
+
+    private async Task RestartWhatsApp()
+    {
+        _savingWhatsApp = true;
+        try
+        {
+            using var response = await Api.PostRawAsync("admin/channels/whatsapp/restart");
+            Snackbar.Add(response.IsSuccessStatusCode ? L["common.success"] : L["common.error"], response.IsSuccessStatusCode ? Severity.Success : Severity.Error);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _savingWhatsApp = false;
+        }
+    }
+
+    private static bool IsWhatsApp(ChannelInfo channel)
+        => string.Equals(channel.Id, "whatsapp", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsChannelEnabled(ChannelInfo channel) => channel.Enabled;
+
+    private static string? ReadString(System.Text.Json.JsonElement root, string propertyName)
+        => root.ValueKind == System.Text.Json.JsonValueKind.Object
+           && root.TryGetProperty(propertyName, out var value)
+           && value.ValueKind == System.Text.Json.JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static bool? ReadBool(System.Text.Json.JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object
+            || !root.TryGetProperty(propertyName, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False => false,
+            _ => null
+        };
+    }
+
+    private static Color StatusColor(string? status) => status?.ToLowerInvariant() switch
+    {
+        "connected" or "ready" or "online" or "active" => Color.Success,
+        "qr_code" or "qr" or "pending" or "initializing" => Color.Warning,
+        "disconnected" or "offline" or "error" or "failed" => Color.Error,
+        _ => Color.Default
+    };
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}

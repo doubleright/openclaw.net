@@ -1,0 +1,477 @@
+@page "/migration"
+@implements IDisposable
+@inject LocalizationService L
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+@using System.Text
+@using System.Text.Encodings.Web
+@using System.Text.Json
+
+<PageTitle>@L["migration.title"] · OpenClaw</PageTitle>
+
+<section class="mig-shell">
+
+    @* ── Header ───────────────────────────────────────────────────────── *@
+    <header class="mig-hero">
+        <div class="mig-hero__crumb">
+            <span class="mig-hero__index">07</span>
+            <span class="mig-hero__slash">/</span>
+            <span class="mig-hero__crumb-text">migration · report analyzer</span>
+        </div>
+        <h1 class="mig-hero__title">@L["migration.title"]</h1>
+        <p class="mig-hero__lead">@L["migration.uploadReport"]</p>
+    </header>
+
+    @* ── Upload panel ─────────────────────────────────────────────────── *@
+    <div class="mig-grid">
+        <article class="mig-panel mig-panel--upload">
+            <div class="mig-panel__head">
+                <span class="mig-eyebrow">step 01 · input</span>
+                <span class="mig-panel__rule"></span>
+            </div>
+
+            <div class="mig-drop @( _file is not null ? "mig-drop--loaded" : "")">
+                <MudFileUpload T="IBrowserFile"
+                               Accept=".json,application/json"
+                               FilesChanged="OnFileSelected"
+                               MaximumFileCount="1">
+                    <CustomContent>
+                        <div class="mig-drop__inner" @onclick="@context.OpenFilePickerAsync">
+                            <div class="mig-drop__glyph" aria-hidden="true">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <div class="mig-drop__title">@L["migration.selectFile"]</div>
+                            <div class="mig-drop__hint">JSON · ≤ 5 MB</div>
+
+                            @if (_file is not null)
+                            {
+                                <div class="mig-drop__file">
+                                    <span class="mig-drop__file-name">@_file.Name</span>
+                                    <span class="mig-drop__file-meta">@FormatBytes(_file.Size)</span>
+                                </div>
+                            }
+                        </div>
+                    </CustomContent>
+                    <SelectedTemplate />
+                </MudFileUpload>
+            </div>
+
+            <div class="mig-actions">
+                <MudButton StartIcon="@Icons.Material.Filled.Insights"
+                           Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Disabled="@(_file is null || _analyzing)"
+                           OnClick="AnalyzeAsync"
+                           Class="mig-btn">
+                    @(_analyzing ? L["common.loading"] : L["migration.analyzeReport"])
+                </MudButton>
+
+                @if (_file is not null)
+                {
+                    <MudButton StartIcon="@Icons.Material.Filled.Close"
+                               Variant="Variant.Text"
+                               Color="Color.Default"
+                               OnClick="ClearFile"
+                               Class="mig-btn mig-btn--ghost">
+                        @L["common.discard"]
+                    </MudButton>
+                }
+            </div>
+        </article>
+
+        @* ── Result panel ─────────────────────────────────────────────── *@
+        <article class="mig-panel mig-panel--result">
+            <div class="mig-panel__head">
+                <span class="mig-eyebrow">step 02 · @L["migration.results"]</span>
+                <span class="mig-panel__rule"></span>
+                @if (_resultJson is not null)
+                {
+                    <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                   Size="Size.Small"
+                                   Color="Color.Default"
+                                   OnClick="CopyResult"
+                                   Class="mig-copy" />
+                }
+            </div>
+
+            @if (_analyzing)
+            {
+                <div class="mig-result mig-result--loading">
+                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+                    <span>@L["common.loading"]</span>
+                </div>
+            }
+            else if (_resultJson is null)
+            {
+                <div class="mig-result mig-result--empty">
+                    <MudIcon Icon="@Icons.Material.Outlined.Article" Size="Size.Large" />
+                    <span>@L["common.noData"]</span>
+                </div>
+            }
+            else
+            {
+                <pre class="mig-result mig-result--code"><code>@_resultJson</code></pre>
+            }
+        </article>
+    </div>
+</section>
+
+@code {
+    private IBrowserFile? _file;
+    private bool _analyzing;
+    private string? _resultJson;
+
+    protected override void OnInitialized()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+    }
+
+    private void OnFileSelected(IBrowserFile? file)
+    {
+        _file = file;
+        _resultJson = null;
+    }
+
+    private void ClearFile()
+    {
+        _file = null;
+        _resultJson = null;
+    }
+
+    private async Task AnalyzeAsync()
+    {
+        if (_file is null)
+        {
+            return;
+        }
+
+        _analyzing = true;
+        _resultJson = null;
+        StateHasChanged();
+
+        try
+        {
+            // Read raw bytes locally (cap at 5 MB to stay AOT/wasm-friendly).
+            const long maxBytes = 5L * 1024 * 1024;
+            using var stream = _file.OpenReadStream(maxBytes);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var raw = await reader.ReadToEndAsync();
+
+            try
+            {
+                using var doc = JsonDocument.Parse(raw);
+                var report = BuildLocalAnalysisPayload(doc.RootElement);
+                _resultJson = JsonSerializer.Serialize(report, new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                });
+                Snackbar.Add(L["common.success"], Severity.Success);
+            }
+            catch (JsonException)
+            {
+                Snackbar.Add(L["common.error"], Severity.Error);
+                _resultJson = null;
+            }
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _analyzing = false;
+            StateHasChanged();
+        }
+    }
+
+    private static object BuildLocalAnalysisPayload(JsonElement root)
+    {
+        var hasReportShape = root.ValueKind == JsonValueKind.Object
+            && (root.TryGetProperty("compatibility", out _)
+                || root.TryGetProperty("skills", out _)
+                || root.TryGetProperty("plugins", out _)
+                || root.TryGetProperty("warnings", out _)
+                || root.TryGetProperty("skippedSettings", out _));
+
+        if (!hasReportShape)
+        {
+            return root;
+        }
+
+        return new
+        {
+            sourcePath = GetPropertyOrDefault(root, "sourcePath"),
+            targetConfigPath = GetPropertyOrDefault(root, "targetConfigPath"),
+            applied = GetPropertyOrDefault(root, "applied"),
+            managedSkillRootPath = GetPropertyOrDefault(root, "managedSkillRootPath"),
+            pluginReviewPlanPath = GetPropertyOrDefault(root, "pluginReviewPlanPath"),
+            compatibility = GetPropertyOrDefault(root, "compatibility"),
+            skills = GetPropertyOrDefault(root, "skills"),
+            plugins = GetPropertyOrDefault(root, "plugins"),
+            warnings = GetPropertyOrDefault(root, "warnings"),
+            skippedSettings = GetPropertyOrDefault(root, "skippedSettings")
+        };
+    }
+
+    private static JsonElement? GetPropertyOrDefault(JsonElement root, string propertyName)
+        => root.TryGetProperty(propertyName, out var value) ? value : null;
+
+    private async Task CopyResult()
+    {
+        if (string.IsNullOrEmpty(_resultJson))
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _resultJson);
+            Snackbar.Add(L["common.success"], Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+    }
+
+    private static string PrettifyJson(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+        }
+        catch
+        {
+            return raw;
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] suffixes = { "B", "KB", "MB", "GB" };
+        double value = bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < suffixes.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value:0.##} {suffixes[unit]}";
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}
+
+<style>
+    .mig-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+        padding: 8px 4px 48px;
+        max-width: 1480px;
+        margin: 0 auto;
+    }
+
+    /* ── Hero ──────────────────────────────────────────────────────────── */
+    .mig-hero {
+        position: relative;
+        padding: 26px 32px 28px;
+        border-radius: 24px;
+        background:
+            radial-gradient(720px 320px at 100% 0%, rgba(245, 158, 11, 0.14), transparent 65%),
+            radial-gradient(720px 320px at 0% 100%, rgba(139, 92, 246, 0.14), transparent 65%),
+            linear-gradient(180deg, rgba(20, 26, 50, 0.55), rgba(11, 16, 32, 0.4));
+        border: 1px solid rgba(139, 146, 200, 0.16);
+        overflow: hidden;
+    }
+    .mig-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.55), rgba(255, 255, 255, 0.35), rgba(139, 92, 246, 0.45), transparent);
+    }
+    .mig-hero__crumb {
+        display: inline-flex; align-items: center; gap: 8px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+    .mig-hero__index { color: #f59e0b; font-weight: 700; }
+    .mig-hero__slash { color: var(--accent); }
+
+    .mig-hero__title {
+        font-family: var(--font-display);
+        font-size: clamp(30px, 3.4vw, 44px);
+        font-weight: 500;
+        letter-spacing: -0.03em;
+        margin: 10px 0 4px;
+        color: var(--text-strong);
+    }
+    .mig-hero__lead { margin: 0; color: var(--muted); font-size: 13px; }
+
+    /* ── Grid ─────────────────────────────────────────────────────────── */
+    .mig-grid {
+        display: grid;
+        gap: 24px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    }
+    @@media (max-width: 1024px) {
+        .mig-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    .mig-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 22px;
+        border-radius: 20px;
+        background: linear-gradient(180deg, rgba(20, 26, 50, 0.7), rgba(11, 16, 32, 0.55));
+        border: 1px solid rgba(139, 146, 200, 0.14);
+    }
+
+    .mig-panel__head {
+        display: flex; align-items: center; gap: 12px;
+    }
+    .mig-eyebrow {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+    }
+    .mig-panel__rule {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--border-bold), transparent);
+    }
+    .mig-copy { color: var(--muted) !important; }
+    .mig-copy:hover { color: var(--accent-hot) !important; }
+
+    /* ── Dropzone ─────────────────────────────────────────────────────── */
+    .mig-drop {
+        position: relative;
+        border-radius: 18px;
+        padding: 6px;
+        background:
+            repeating-linear-gradient(45deg,
+                rgba(139, 92, 246, 0.08) 0 14px,
+                transparent 14px 28px);
+        border: 1px dashed rgba(139, 92, 246, 0.32);
+        transition: border-color 200ms, background 200ms;
+    }
+    .mig-drop--loaded {
+        border-color: rgba(52, 211, 153, 0.45);
+        background:
+            repeating-linear-gradient(45deg,
+                rgba(52, 211, 153, 0.07) 0 14px,
+                transparent 14px 28px);
+    }
+
+    .mig-drop .mud-file-upload { width: 100%; }
+    .mig-drop__inner {
+        display: flex; flex-direction: column; align-items: center;
+        gap: 10px;
+        padding: 32px 20px;
+        cursor: pointer;
+        text-align: center;
+        color: var(--text);
+    }
+
+    .mig-drop__glyph {
+        display: flex; gap: 5px; align-items: flex-end; height: 26px;
+    }
+    .mig-drop__glyph span {
+        width: 4px; background: var(--accent); border-radius: 2px;
+        box-shadow: 0 0 12px var(--accent-glow);
+        animation: mig-glyph 1.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+    }
+    .mig-drop__glyph span:nth-child(1) { animation-delay: 0s;    height: 12px; }
+    .mig-drop__glyph span:nth-child(2) { animation-delay: 0.18s; height: 22px; }
+    .mig-drop__glyph span:nth-child(3) { animation-delay: 0.36s; height: 16px; }
+    @@keyframes mig-glyph {
+        0%, 100% { transform: scaleY(0.4); opacity: 0.55; }
+        50%      { transform: scaleY(1);   opacity: 1; }
+    }
+
+    .mig-drop__title {
+        font-family: var(--font-display);
+        font-size: 18px;
+        letter-spacing: -0.01em;
+        color: var(--text-strong);
+    }
+    .mig-drop__hint {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+    }
+    .mig-drop__file {
+        display: inline-flex; gap: 10px; align-items: baseline;
+        margin-top: 6px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: rgba(52, 211, 153, 0.1);
+        border: 1px solid rgba(52, 211, 153, 0.32);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--signal-ok);
+    }
+    .mig-drop__file-meta { color: var(--muted); font-size: 11px; }
+
+    .mig-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .mig-btn { text-transform: none !important; letter-spacing: 0.01em; border-radius: 10px !important; }
+    .mig-btn--ghost { color: var(--muted) !important; }
+
+    /* ── Result ───────────────────────────────────────────────────────── */
+    .mig-result {
+        min-height: 320px;
+        max-height: 620px;
+        overflow: auto;
+        border-radius: 16px;
+        padding: 18px;
+        background: rgba(7, 10, 23, 0.8);
+        border: 1px solid rgba(139, 146, 200, 0.1);
+    }
+    .mig-result--empty,
+    .mig-result--loading {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 14px;
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        letter-spacing: 0.1em;
+    }
+    .mig-result--loading .mud-progress-linear { width: min(420px, 60%); }
+
+    .mig-result--code {
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        line-height: 1.65;
+        color: #d6d8f5;
+        white-space: pre;
+        word-break: normal;
+        tab-size: 2;
+    }
+    .mig-result--code code { font-family: inherit; }
+</style>

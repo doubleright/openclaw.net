@@ -1,0 +1,792 @@
+@page "/sessions"
+@implements IDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>@L["sessions.title"] · OpenClaw</PageTitle>
+
+<div class="sx-shell">
+    <header class="sx-header">
+        <div>
+            <div class="sx-eyebrow">// CONVERSATION ARCHIVE</div>
+            <MudText Typo="Typo.h4" Class="sx-title">@L["sessions.title"]</MudText>
+        </div>
+        <div class="sx-stats">
+            <span class="sx-stat-key">@L["sessions.sessionId"]</span>
+            <span class="sx-stat-val">@(_sessions?.Count ?? 0)</span>
+        </div>
+    </header>
+
+    <MudPaper Elevation="0" Class="sx-filterbar">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="5">
+                <MudTextField @bind-Value="_search"
+                              Placeholder="@L["sessions.searchSessions"]"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search"
+                              Immediate="false"
+                              OnKeyDown="@OnSearchKey" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudTextField @bind-Value="_channelFilter"
+                              Placeholder="@L["sessions.channelFilter"]"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudTextField @bind-Value="_senderFilter"
+                              Placeholder="@L["sessions.senderFilter"]"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           FullWidth="true"
+                           StartIcon="@Icons.Material.Filled.FilterAlt"
+                           OnClick="SearchSessions">
+                    @L["common.search"]
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="3" Class="mt-3">
+        <MudItem xs="12" md="5" lg="4">
+            <MudPaper Elevation="0" Class="sx-list-pane">
+                <div class="sx-pane-head">
+                    <MudText Typo="Typo.overline">@L["sessions.title"]</MudText>
+                    <div class="sx-page-controls">
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@Icons.Material.Filled.ChevronLeft"
+                                       Disabled="@(_page <= 1 || _loading)"
+                                       OnClick="PrevPage" />
+                        <span class="sx-page-num">@_page</span>
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@Icons.Material.Filled.ChevronRight"
+                                       Disabled="@(!_hasMore || _loading)"
+                                       OnClick="NextPage" />
+                    </div>
+                </div>
+
+                @if (_loading && _sessions is null)
+                {
+                    <div class="pa-3">
+                        <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="64px" Class="mb-2" />
+                        <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="64px" Class="mb-2" />
+                        <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="64px" />
+                    </div>
+                }
+                else if (_sessions is null || _sessions.Count == 0)
+                {
+                    <EmptyHint Icon="@Icons.Material.Filled.SearchOff"
+                               Title="@L["common.noData"]"
+                               Subtitle="@L["sessions.title"]" />
+                }
+                else
+                {
+                    <div class="sx-session-list">
+                        @foreach (var s in _sessions)
+                        {
+                            var selected = _selectedDetail?.SessionId == s.SessionId;
+                            <button class="sx-session-card @(selected ? "is-active" : string.Empty)"
+                                    @onclick="@(() => SelectSession(s))">
+                                <div class="sx-session-card__head">
+                                    <code class="sx-mono sx-mono-id">@TruncateId(s.SessionId)</code>
+                                    @if (!string.IsNullOrEmpty(s.ChannelId))
+                                    {
+                                        <span class="sx-channel-tag">@s.ChannelId</span>
+                                    }
+                                </div>
+                                <div class="sx-session-card__meta">
+                                    <span class="sx-meta-icon">
+                                        <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" />
+                                        @(s.SenderId ?? "—")
+                                    </span>
+                                    <span class="sx-meta-time">@RelativeTime(s.LastActive)</span>
+                                </div>
+                            </button>
+                        }
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="7" lg="8">
+            <MudPaper Elevation="0" Class="sx-detail-pane">
+                @if (_loadingDetail)
+                {
+                    <div class="pa-4">
+                        <MudSkeleton SkeletonType="SkeletonType.Text" Width="50%" />
+                        <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="120px" Class="mt-3" />
+                        <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="80px" Class="mt-3" />
+                    </div>
+                }
+                else if (_selectedDetail is null)
+                {
+                    <EmptyHint Icon="@Icons.Material.Filled.Forum"
+                               Title="@L["sessions.sessionDetail"]"
+                               Subtitle="@L["sessions.searchSessions"]" />
+                }
+                else
+                {
+                    <div class="sx-detail-head">
+                        <div>
+                            <MudText Typo="Typo.overline" Style="opacity:.6">@L["sessions.sessionId"]</MudText>
+                            <code class="sx-mono sx-detail-id">@_selectedDetail.SessionId</code>
+                        </div>
+                        <div class="sx-detail-meta">
+                            <div><span>@L["sessions.channelFilter"]</span><strong>@(_selectedDetail.ChannelId ?? "—")</strong></div>
+                            <div><span>@L["sessions.senderFilter"]</span><strong>@(_selectedDetail.SenderId ?? "—")</strong></div>
+                            <div><span>@L["sessions.lastActive"]</span><strong>@RelativeTime(_selectedDetail.LastActive)</strong></div>
+                        </div>
+                    </div>
+
+                    <MudDivider Class="my-3" />
+
+                    <section class="sx-section">
+                        <div class="sx-section-head">
+                            <MudText Typo="Typo.subtitle2" Class="sx-section-label">
+                                @L["sessions.messages"]
+                            </MudText>
+                            <span class="sx-count-pill">@(_selectedDetail.Messages?.Count ?? 0)</span>
+                        </div>
+
+                        @if (_selectedDetail.Messages is null || _selectedDetail.Messages.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Style="opacity:.6" Class="pa-4 text-center">
+                                @L["common.noData"]
+                            </MudText>
+                        }
+                        else
+                        {
+                            <div class="sx-timeline">
+                                @foreach (var msg in _selectedDetail.Messages)
+                                {
+                                    var isUser = string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
+                                    <div class="sx-msg @(isUser ? "is-user" : "is-assistant")">
+                                        <div class="sx-msg__role">
+                                            <MudIcon Icon="@(isUser ? Icons.Material.Filled.Person : Icons.Material.Filled.SmartToy)"
+                                                     Size="Size.Small" />
+                                            <span>@msg.Role</span>
+                                            <span class="sx-msg__time">@FormatTime(msg.Timestamp)</span>
+                                        </div>
+                                        <div class="sx-msg__bubble">@msg.Content</div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </section>
+
+                    <MudDivider Class="my-3" />
+
+                    <section class="sx-section">
+                        <div class="sx-section-head">
+                            <MudText Typo="Typo.subtitle2" Class="sx-section-label">
+                                @L["sessions.metadata"]
+                            </MudText>
+                            @if (Auth.HasRole("operator"))
+                            {
+                                <MudButton Size="Size.Small"
+                                           Variant="Variant.Outlined"
+                                           StartIcon="@Icons.Material.Filled.Edit"
+                                           OnClick="OpenMetadataEditor">
+                                    @L["sessions.editMetadata"]
+                                </MudButton>
+                            }
+                        </div>
+                        <pre class="sx-json">@FormatMetadata(_selectedDetail.Metadata)</pre>
+                    </section>
+
+                    @if (ExtractBranches(_selectedDetail.Metadata) is { Count: > 0 } branches)
+                    {
+                        <MudDivider Class="my-3" />
+                        <section class="sx-section">
+                            <div class="sx-section-head">
+                                <MudText Typo="Typo.subtitle2" Class="sx-section-label">
+                                    @L["sessions.branches"]
+                                </MudText>
+                                <span class="sx-count-pill">@branches.Count</span>
+                            </div>
+                            <div class="sx-branches">
+                                @foreach (var b in branches)
+                                {
+                                    <div class="sx-branch">
+                                        <code class="sx-mono">@b</code>
+                                        <div class="d-flex gap-1">
+                                            <MudButton Size="Size.Small"
+                                                       Variant="Variant.Text"
+                                                       StartIcon="@Icons.Material.Filled.CompareArrows"
+                                                       OnClick="@(() => ViewBranchDiff(b))">
+                                                @L["sessions.branchDiff"]
+                                            </MudButton>
+                                            @if (Auth.HasRole("operator"))
+                                            {
+                                                <MudButton Size="Size.Small"
+                                                           Variant="Variant.Outlined"
+                                                           Color="Color.Warning"
+                                                           StartIcon="@Icons.Material.Filled.Restore"
+                                                           OnClick="@(() => RestoreBranch(b))">
+                                                    @L["sessions.restoreBranch"]
+                                                </MudButton>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </section>
+                    }
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</div>
+
+<MudDialog @bind-Visible="_metadataDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@L["sessions.editMetadata"]</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_metadataJson"
+                      Lines="14"
+                      Variant="Variant.Outlined"
+                      FullWidth="true"
+                      Class="sx-json-editor" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _metadataDialog = false)">@L["common.cancel"]</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   OnClick="SaveMetadata">@L["common.save"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<MudDialog @bind-Visible="_diffDialog" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@L["sessions.branchDiff"]</MudText>
+    </TitleContent>
+    <DialogContent>
+        <pre class="sx-json sx-diff">@_diffContent</pre>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _diffDialog = false)">@L["common.close"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .sx-shell { max-width: 1480px; margin: 0 auto; }
+    .sx-header {
+        display:flex; align-items:flex-end; justify-content:space-between;
+        padding: 8px 4px 16px; border-bottom: 1px solid var(--mud-palette-lines-default);
+        margin-bottom: 16px;
+    }
+    .sx-eyebrow {
+        font-family: 'JetBrains Mono','Consolas',monospace;
+        font-size: 11px; letter-spacing: .18em; color: var(--mud-palette-secondary);
+        margin-bottom: 6px; opacity:.75;
+    }
+    .sx-title { font-weight:700; letter-spacing:-.02em; }
+    .sx-stats {
+        display:flex; flex-direction:column; align-items:flex-end;
+        font-family:'JetBrains Mono','Consolas',monospace;
+    }
+    .sx-stat-key { font-size: 10px; letter-spacing:.12em; opacity:.55; text-transform:uppercase; }
+    .sx-stat-val { font-size: 28px; font-weight: 700; color: var(--mud-palette-primary); line-height:1; }
+
+    .sx-filterbar { padding: 12px 16px; background: var(--mud-palette-surface);
+        border: 1px solid var(--mud-palette-lines-default); border-radius: 12px; }
+
+    .sx-list-pane, .sx-detail-pane {
+        background: var(--mud-palette-surface);
+        border: 1px solid var(--mud-palette-lines-default);
+        border-radius: 12px; min-height: 540px; overflow: hidden;
+    }
+    .sx-pane-head {
+        display:flex; align-items:center; justify-content:space-between;
+        padding: 12px 16px; border-bottom: 1px solid var(--mud-palette-lines-default);
+    }
+    .sx-page-controls { display:flex; align-items:center; gap:4px; }
+    .sx-page-num {
+        font-family:'JetBrains Mono','Consolas',monospace; font-size:12px;
+        min-width:24px; text-align:center; opacity:.75;
+    }
+
+    .sx-session-list { display:flex; flex-direction:column; padding: 8px; gap: 6px; }
+    .sx-session-card {
+        text-align:left; cursor:pointer; padding: 12px 14px; border-radius: 10px;
+        background: transparent; border: 1px solid transparent;
+        color: inherit; transition: all .18s ease;
+    }
+    .sx-session-card:hover { background: rgba(139,92,246,.06); border-color: var(--mud-palette-lines-default); }
+    .sx-session-card.is-active {
+        background: linear-gradient(135deg, rgba(139,92,246,.16), rgba(14,165,233,.06));
+        border-color: var(--mud-palette-primary);
+        box-shadow: inset 3px 0 0 var(--mud-palette-primary);
+    }
+    .sx-session-card__head {
+        display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;
+    }
+    .sx-session-card__meta {
+        display:flex; align-items:center; justify-content:space-between;
+        font-size: 11px; opacity:.7;
+    }
+    .sx-meta-icon { display:inline-flex; align-items:center; gap:4px; }
+    .sx-meta-time { font-family:'JetBrains Mono','Consolas',monospace; }
+    .sx-channel-tag {
+        font-size: 10px; padding: 2px 8px; border-radius: 999px;
+        background: rgba(14,165,233,.14); color: var(--mud-palette-secondary);
+        text-transform: lowercase; letter-spacing:.04em;
+    }
+
+    .sx-detail-pane { padding: 18px 22px; }
+    .sx-detail-head {
+        display:flex; align-items:flex-start; justify-content:space-between; gap: 24px; flex-wrap:wrap;
+    }
+    .sx-detail-id {
+        display:inline-block; padding:6px 10px; font-size:13px;
+        background: rgba(139,92,246,.1); color: var(--mud-palette-primary);
+        border-radius: 6px; margin-top:4px;
+    }
+    .sx-detail-meta {
+        display:flex; gap: 18px; flex-wrap:wrap;
+    }
+    .sx-detail-meta > div {
+        display:flex; flex-direction:column; gap:2px;
+    }
+    .sx-detail-meta span {
+        font-size: 10px; letter-spacing:.12em; text-transform:uppercase; opacity:.55;
+    }
+    .sx-detail-meta strong { font-size: 13px; font-weight:600; }
+
+    .sx-section-head {
+        display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;
+    }
+    .sx-section-label {
+        text-transform: uppercase; letter-spacing: .12em; font-weight:600; opacity:.85;
+    }
+    .sx-count-pill {
+        font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;
+        padding: 1px 8px; border-radius: 999px;
+        background: var(--mud-palette-action-disabled-background);
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .sx-mono {
+        font-family:'JetBrains Mono','Consolas',monospace;
+        font-size: 12px; padding: 1px 6px; border-radius: 4px;
+        background: rgba(255,255,255,.04);
+    }
+    .sx-mono-id { font-size: 11px; opacity: .92; }
+
+    .sx-timeline {
+        display:flex; flex-direction:column; gap: 14px;
+        max-height: 420px; overflow-y: auto; padding-right: 4px;
+    }
+    .sx-msg { display:flex; flex-direction:column; max-width: 78%; gap: 4px; }
+    .sx-msg.is-user { align-self: flex-end; align-items: flex-end; }
+    .sx-msg.is-assistant { align-self: flex-start; align-items: flex-start; }
+    .sx-msg__role {
+        display:flex; align-items:center; gap: 6px;
+        font-size: 10px; letter-spacing:.08em; text-transform: uppercase; opacity:.65;
+    }
+    .sx-msg__time { font-family:'JetBrains Mono','Consolas',monospace; opacity:.5; }
+    .sx-msg__bubble {
+        padding: 10px 14px; border-radius: 14px;
+        font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-wrap: break-word;
+    }
+    .sx-msg.is-user .sx-msg__bubble {
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        color: #ffffff; border-bottom-right-radius: 4px;
+    }
+    .sx-msg.is-assistant .sx-msg__bubble {
+        background: rgba(148,163,184,.12);
+        border: 1px solid var(--mud-palette-lines-default);
+        border-bottom-left-radius: 4px;
+    }
+
+    .sx-json {
+        font-family:'JetBrains Mono','Consolas',monospace;
+        font-size: 12px; line-height: 1.55;
+        background: rgba(0,0,0,.25);
+        border: 1px solid var(--mud-palette-lines-default);
+        border-radius: 8px;
+        padding: 12px 14px; max-height: 280px; overflow: auto;
+        white-space: pre-wrap; word-break: break-word;
+    }
+    .sx-diff { max-height: 60vh; }
+    .sx-json-editor ::deep textarea {
+        font-family:'JetBrains Mono','Consolas',monospace !important;
+        font-size: 12px !important;
+    }
+
+    .sx-branches { display:flex; flex-direction:column; gap: 6px; }
+    .sx-branch {
+        display:flex; align-items:center; justify-content:space-between;
+        padding: 8px 12px; border-radius: 8px;
+        border: 1px solid var(--mud-palette-lines-default);
+        background: rgba(245,158,11,.04);
+    }
+</style>
+
+@code {
+    private List<SessionInfo>? _sessions;
+    private SessionDetail? _selectedDetail;
+    private string _search = string.Empty;
+    private string _channelFilter = string.Empty;
+    private string _senderFilter = string.Empty;
+    private int _page = 1;
+    private const int PageSize = 20;
+    private bool _hasMore;
+    private bool _loading = true;
+    private bool _loadingDetail;
+
+    private bool _metadataDialog;
+    private bool _diffDialog;
+    private string _metadataJson = string.Empty;
+    private string _diffContent = string.Empty;
+
+    private readonly DialogOptions _dialogOptions = new()
+    {
+        MaxWidth = MaxWidth.Medium,
+        FullWidth = true,
+        CloseOnEscapeKey = true
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        await LoadSessions();
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task LoadSessions()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            var url = $"/admin/sessions?page={_page}&pageSize={PageSize}"
+                + (string.IsNullOrEmpty(_search) ? string.Empty : $"&search={Uri.EscapeDataString(_search)}")
+                + (string.IsNullOrEmpty(_channelFilter) ? string.Empty : $"&channelId={Uri.EscapeDataString(_channelFilter)}")
+                + (string.IsNullOrEmpty(_senderFilter) ? string.Empty : $"&senderId={Uri.EscapeDataString(_senderFilter)}");
+
+            using var resp = await Api.GetRawAsync(url);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _sessions = new List<SessionInfo>();
+                _hasMore = false;
+                return;
+            }
+
+            using var stream = await resp.Content.ReadAsStreamAsync();
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+            var root = doc.RootElement;
+
+            System.Text.Json.JsonElement arr = root;
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("sessions", out var s) &&
+                    s.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    arr = s;
+                }
+                else if (root.TryGetProperty("items", out var i) &&
+                    i.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    arr = i;
+                }
+
+                if (root.TryGetProperty("hasMore", out var hm) &&
+                    hm.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+                {
+                    _hasMore = hm.GetBoolean();
+                }
+                else
+                {
+                    _hasMore = false;
+                }
+            }
+
+            if (arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                _sessions = System.Text.Json.JsonSerializer.Deserialize<List<SessionInfo>>(arr.GetRawText(), Api.JsonOptions)
+                            ?? new List<SessionInfo>();
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+                {
+                    _hasMore = _sessions.Count >= PageSize;
+                }
+            }
+            else
+            {
+                _sessions = new List<SessionInfo>();
+                _hasMore = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"{L["common.error"]}: {ex.Message}", Severity.Error);
+            _sessions = new List<SessionInfo>();
+            _hasMore = false;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SelectSession(SessionInfo session)
+    {
+        _loadingDetail = true;
+        _selectedDetail = null;
+        StateHasChanged();
+
+        try
+        {
+            using var resp = await Api.GetRawAsync($"/admin/sessions/{session.SessionId}");
+            if (resp.IsSuccessStatusCode)
+            {
+                var detail = await resp.Content.ReadFromJsonAsync<SessionDetail>(Api.JsonOptions);
+                _selectedDetail = detail ?? new SessionDetail(
+                    session.SessionId, session.ChannelId, session.SenderId,
+                    session.LastActive, session.Metadata, new List<SessionMessage>());
+            }
+            else
+            {
+                _selectedDetail = new SessionDetail(
+                    session.SessionId, session.ChannelId, session.SenderId,
+                    session.LastActive, session.Metadata, new List<SessionMessage>());
+            }
+        }
+        catch
+        {
+            _selectedDetail = new SessionDetail(
+                session.SessionId, session.ChannelId, session.SenderId,
+                session.LastActive, session.Metadata, new List<SessionMessage>());
+        }
+        finally
+        {
+            _loadingDetail = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SearchSessions()
+    {
+        _page = 1;
+        await LoadSessions();
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SearchSessions();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        _page++;
+        await LoadSessions();
+    }
+
+    private async Task PrevPage()
+    {
+        if (_page > 1)
+        {
+            _page--;
+            await LoadSessions();
+        }
+    }
+
+    private void OpenMetadataEditor()
+    {
+        _metadataJson = FormatMetadata(_selectedDetail?.Metadata);
+        _metadataDialog = true;
+    }
+
+    private async Task SaveMetadata()
+    {
+        if (_selectedDetail is null)
+        {
+            return;
+        }
+
+        object? body;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(_metadataJson);
+            body = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(
+                doc.RootElement.GetRawText(), Api.JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Invalid JSON: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        using var resp = await Api.PostRawAsync(
+            $"/admin/sessions/{_selectedDetail.SessionId}/metadata", body);
+
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add(L["common.success"], Severity.Success);
+            _metadataDialog = false;
+            await SelectSession(new SessionInfo(
+                _selectedDetail.SessionId,
+                _selectedDetail.ChannelId,
+                _selectedDetail.SenderId,
+                _selectedDetail.LastActive,
+                _selectedDetail.Metadata));
+        }
+        else
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+    }
+
+    private async Task ViewBranchDiff(string branchId)
+    {
+        if (_selectedDetail is null) return;
+        try
+        {
+            using var resp = await Api.GetRawAsync(
+                $"/admin/sessions/{_selectedDetail.SessionId}/diff?branchId={Uri.EscapeDataString(branchId)}");
+            if (resp.IsSuccessStatusCode)
+            {
+                var raw = await resp.Content.ReadAsStringAsync();
+                _diffContent = PrettyPrintJson(raw);
+            }
+            else
+            {
+                _diffContent = $"// HTTP {(int)resp.StatusCode}";
+            }
+            _diffDialog = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"{L["common.error"]}: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task RestoreBranch(string branchId)
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            L["sessions.restoreBranch"],
+            L["sessions.confirmRestore"],
+            yesText: L["common.confirm"],
+            cancelText: L["common.cancel"]);
+        if (confirm != true) return;
+
+        using var resp = await Api.PostRawAsync($"/admin/branches/{branchId}/restore");
+        if (resp.IsSuccessStatusCode)
+        {
+            Snackbar.Add(L["common.success"], Severity.Success);
+        }
+        else
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+    }
+
+    private static string FormatMetadata(Dictionary<string, object>? metadata)
+    {
+        if (metadata is null || metadata.Count == 0)
+        {
+            return "{}";
+        }
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Serialize(metadata,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return "{}";
+        }
+    }
+
+    private static string PrettyPrintJson(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(raw);
+            return System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return raw;
+        }
+    }
+
+    private static List<string> ExtractBranches(Dictionary<string, object>? metadata)
+    {
+        var result = new List<string>();
+        if (metadata is null) return result;
+
+        if (metadata.TryGetValue("branches", out var raw) && raw is not null)
+        {
+            try
+            {
+                if (raw is System.Text.Json.JsonElement el)
+                {
+                    if (el.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        foreach (var item in el.EnumerateArray())
+                        {
+                            if (item.ValueKind == System.Text.Json.JsonValueKind.String)
+                            {
+                                var v = item.GetString();
+                                if (!string.IsNullOrEmpty(v)) result.Add(v);
+                            }
+                            else if (item.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                                     item.TryGetProperty("id", out var idEl) &&
+                                     idEl.ValueKind == System.Text.Json.JsonValueKind.String)
+                            {
+                                var v = idEl.GetString();
+                                if (!string.IsNullOrEmpty(v)) result.Add(v);
+                            }
+                        }
+                    }
+                }
+            }
+            catch { /* ignore */ }
+        }
+
+        return result;
+    }
+
+    private static string TruncateId(string id)
+        => string.IsNullOrEmpty(id) ? "—"
+            : (id.Length > 18 ? id[..8] + "…" + id[^6..] : id);
+
+    private static string FormatTime(DateTime? dt)
+        => dt?.ToLocalTime().ToString("HH:mm:ss") ?? "—";
+
+    private static string RelativeTime(DateTime? dt)
+    {
+        if (dt is null) return "—";
+        var diff = DateTime.UtcNow - dt.Value.ToUniversalTime();
+        if (diff.TotalSeconds < 60) return $"{(int)diff.TotalSeconds}s";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h";
+        if (diff.TotalDays < 30) return $"{(int)diff.TotalDays}d";
+        return dt.Value.ToLocalTime().ToString("yyyy-MM-dd");
+    }
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}

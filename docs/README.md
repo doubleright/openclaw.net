@@ -25,6 +25,7 @@ Use this page as the map. If you are unsure where to go next, the groups below a
 | [plugins/payment.md](plugins/payment.md) | Native payment tool, virtual cards, machine payments, providers, and safe agent-facing actions. |
 | [cli/payment.md](cli/payment.md) | `openclaw payment ...` gateway-backed CLI commands and safe output contract. |
 | [mempalace-memory.md](mempalace-memory.md) | Optional ElBruno.MempalaceNet memory provider and temporal KG tool. |
+| [FRACTAL_MEMORY.md](FRACTAL_MEMORY.md) | Optional MCP-first Fractal Memory integration for compact structured project memory and Runtime Pulse context. |
 | [providers/microsoft-extensions-ai.md](providers/microsoft-extensions-ai.md) | Optional JIT bridge for arbitrary `Microsoft.Extensions.AI.IChatClient` providers. |
 | [SESSIONS.md](SESSIONS.md) | Session lifecycle, the `SessionManager`, and the `sessions_spawn` / `sessions_yield` / `sessions` tools. |
 | [CANVAS_A2UI.md](CANVAS_A2UI.md) | Supported Canvas and A2UI behavior for agent-rendered visual workspaces. |
@@ -41,6 +42,7 @@ Use this page as the map. If you are unsure where to go next, the groups below a
 | [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md) | Passive approval and oversight decision history as durable harness state. |
 | [HARNESS_REGRESSION.md](HARNESS_REGRESSION.md) | Offline-first CLI regression checks for harness safety, onboarding, memory, provider-shape, MCP, OpenAI-compatible, and serialization guarantees. |
 | [HARNESS_EVOLUTION.md](HARNESS_EVOLUTION.md) | Review-first proposals for harness changes to policies, routing, memory retrieval, verification, pulse behavior, and tool governance. |
+| [SHARED_HARNESS_STATE.md](SHARED_HARNESS_STATE.md) | Passive shared state for delegated and future multi-agent workflows, including participants, actions, read/write sets, assumptions, verifier obligations, and conflicts. |
 | [governance/sidecar-pattern.md](governance/sidecar-pattern.md) | Optional central tool-governance middleware, sidecar flow, decisions, and audit fields. |
 | [governance/microsoft-agent-governance.md](governance/microsoft-agent-governance.md) | Microsoft Agent Governance sidecar integration notes and deployment cautions. |
 | [deployment/TAILSCALE.md](deployment/TAILSCALE.md) | Optional Tailscale Serve private runtime access guidance. |

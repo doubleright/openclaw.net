@@ -29,6 +29,7 @@ namespace OpenClaw.Gateway.Endpoints;
 internal static partial class AdminEndpoints
 {
     private const int MaxAdminJsonBodyBytes = 256 * 1024;
+    private const int MaxAgentBundleJsonBodyBytes = 4 * 1024 * 1024;
 
     private static bool HasTailscaleIdentityHeaders(IHeaderDictionary headers)
         => headers.Keys.Any(static key =>
@@ -49,6 +50,7 @@ internal static partial class AdminEndpoints
         public IMemoryStore MemoryStore { get; init; } = null!;
         public IMemoryNoteSearch? MemorySearch { get; init; }
         public IMemoryNoteCatalog? MemoryCatalog { get; init; }
+        public IStructuredMemoryProvider? StructuredMemoryProvider { get; init; }
         public IUserProfileStore ProfileStore { get; init; } = null!;
         public ILearningProposalStore ProposalStore { get; init; } = null!;
         public GatewayAutomationService AutomationService { get; init; } = null!;
@@ -56,6 +58,7 @@ internal static partial class AdminEndpoints
         public HarnessContractService HarnessContracts { get; init; } = null!;
         public EvidenceBundleService EvidenceBundles { get; init; } = null!;
         public GovernanceLedgerService GovernanceLedger { get; init; } = null!;
+        public SharedHarnessStateService SharedHarnessState { get; init; } = null!;
         public PlanExecuteVerifyService PlanExecuteVerify { get; init; } = null!;
         public IntegrationApiFacade Facade { get; init; } = null!;
         public ToolPresetResolver ToolPresetResolver { get; init; } = null!;
@@ -73,10 +76,10 @@ internal static partial class AdminEndpoints
         public IExternalCliEventSink ExternalCliEvents { get; init; } = null!;
     }
 
-    private static async Task<JsonBodyReadResult<T>> ReadJsonBodyAsync<T>(HttpContext ctx, JsonTypeInfo<T> typeInfo)
+    private static async Task<JsonBodyReadResult<T>> ReadJsonBodyAsync<T>(HttpContext ctx, JsonTypeInfo<T> typeInfo, int maxBytes = MaxAdminJsonBodyBytes)
         where T : class
     {
-        if (ctx.Request.ContentLength is > MaxAdminJsonBodyBytes)
+        if (ctx.Request.ContentLength.HasValue && ctx.Request.ContentLength.Value > maxBytes)
             return new(default, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
 
         if (ctx.Request.ContentLength is 0)
@@ -92,7 +95,7 @@ internal static partial class AdminEndpoints
                 if (read == 0)
                     break;
 
-                if (payload.Length + read > MaxAdminJsonBodyBytes)
+                if (payload.Length + read > maxBytes)
                     return new(default, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
 
                 await payload.WriteAsync(buffer.AsMemory(0, read), ctx.RequestAborted);

@@ -1,0 +1,49 @@
+@implements IDisposable
+@inject LocalizationService L
+
+<MudTooltip Text="@L["language.switchTo"]" Placement="Placement.Bottom">
+    <MudMenu Icon="@Icons.Material.Filled.Language"
+             Color="Color.Inherit"
+             AnchorOrigin="Origin.BottomRight"
+             TransformOrigin="Origin.TopRight"
+             Dense="true">
+        <MudMenuItem Icon="@(IsActive("en-US") ? Icons.Material.Filled.Check : null)"
+                     OnClick="@(() => SelectAsync("en-US"))">
+            @L["language.english"]
+        </MudMenuItem>
+        <MudMenuItem Icon="@(IsActive("zh-CN") ? Icons.Material.Filled.Check : null)"
+                     OnClick="@(() => SelectAsync("zh-CN"))">
+            @L["language.chinese"]
+        </MudMenuItem>
+    </MudMenu>
+</MudTooltip>
+
+@code {
+    protected override void OnInitialized()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+    }
+
+    private bool IsActive(string locale)
+        => string.Equals(L.CurrentLocale, locale, StringComparison.Ordinal);
+
+    private async Task SelectAsync(string locale)
+    {
+        if (IsActive(locale))
+        {
+            return;
+        }
+
+        await L.SetLanguageAsync(locale);
+    }
+
+    private void HandleLanguageChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}

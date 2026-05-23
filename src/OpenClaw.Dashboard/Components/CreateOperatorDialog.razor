@@ -1,0 +1,62 @@
+@implements IDisposable
+@inject LocalizationService L
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@L["governance.createOperator"]</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_username"
+                      Label="@L["auth.username"]"
+                      Variant="Variant.Outlined"
+                      Required="true"
+                      Class="mt-2" />
+        <MudTextField @bind-Value="_displayName"
+                      Label="@L["governance.displayName"]"
+                      Variant="Variant.Outlined"
+                      Class="mt-3" />
+        <MudTextField @bind-Value="_password"
+                      Label="@L["auth.password"]"
+                      Variant="Variant.Outlined"
+                      InputType="InputType.Password"
+                      Required="true"
+                      Class="mt-3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">@L["common.cancel"]</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   OnClick="Submit"
+                   Disabled="@(string.IsNullOrWhiteSpace(_username) || string.IsNullOrWhiteSpace(_password))">
+            @L["common.create"]
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    private string _username = string.Empty;
+    private string _displayName = string.Empty;
+    private string _password = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        L.OnLanguageChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    private void Submit()
+    {
+        var draft = new OperatorDraft(_username.Trim(), _displayName.Trim(), _password);
+        MudDialog.Close(DialogResult.Ok(draft));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleStateChanged;
+    }
+}

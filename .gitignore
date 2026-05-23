@@ -2,6 +2,8 @@
 bin/
 obj/
 artifacts/
+TestResults/
+*.trx
 
 # Rider / VS / VS Code
 .idea/
@@ -16,9 +18,10 @@ artifacts/
 # OS
 .DS_Store
 
-# Local runtime data (lowercase 'memory/' dirs — not src/OpenClaw.Core/Memory/)
+# Local runtime data (lowercase 'memory/' dirs — not source Memory folders)
 **/memory/
 !src/OpenClaw.Core/Memory/
+!src/OpenClaw.Agent/Memory/
 
 # Local dotnet tools (profiling helpers)
 .dotnet-tools/

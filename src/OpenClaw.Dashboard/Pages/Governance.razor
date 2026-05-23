@@ -1,0 +1,568 @@
+@page "/governance"
+@implements IDisposable
+@using System.Text.Json
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>@L["governance.title"] · OpenClaw</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+
+    <div class="mb-6">
+        <MudText Typo="Typo.overline" Style="letter-spacing: 0.18em; opacity: 0.6;">
+            OPENCLAW · ADMIN ZONE
+        </MudText>
+        <MudText Typo="Typo.h4" Style="font-weight: 600; letter-spacing: -0.02em;">
+            @L["governance.title"]
+        </MudText>
+    </div>
+
+    @if (!Auth.HasRole("admin"))
+    {
+        <MudAlert Severity="Severity.Warning"
+                  Variant="Variant.Outlined"
+                  Icon="@Icons.Material.Filled.Lock"
+                  Class="my-4">
+            <MudText Typo="Typo.subtitle1" Style="font-weight: 600;">
+                Administrator privileges required
+            </MudText>
+            <MudText Typo="Typo.body2">
+                @L["auth.notAuthenticated"] — please log in with an admin account to access governance controls.
+            </MudText>
+        </MudAlert>
+    }
+    else
+    {
+    @if (_loading)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="mb-4" />
+    }
+
+    <!-- Section A: Deployment Status -->
+    <MudPaper Elevation="0" Outlined="true" Class="pa-5 mb-4" Style="border-radius: 12px;">
+        <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-4">
+            <div class="d-flex align-center gap-3">
+                <MudIcon Icon="@Icons.Material.Filled.RocketLaunch"
+                         Color="Color.Primary"
+                         Size="Size.Large" />
+                <div>
+                    <MudText Typo="Typo.h6" Style="font-weight: 600;">
+                        @L["governance.deploymentStatus"]
+                    </MudText>
+                    <MudText Typo="Typo.body2" Style="opacity: 0.7;">
+                        First-run wizard state and deployment readiness.
+                    </MudText>
+                </div>
+            </div>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.FactCheck"
+                       OnClick="VerifyDeployment"
+                       Disabled="_verifying">
+                @if (_verifying)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                }
+                @L["governance.verify"]
+            </MudButton>
+        </div>
+
+        @if (_deployStatus is null)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                @L["common.noData"]
+            </MudAlert>
+        }
+        else
+        {
+            <MudGrid Spacing="2">
+                @foreach (var prop in EnumerateTopLevel(_deployStatus.Value))
+                {
+                    <MudItem xs="12" sm="6" md="4">
+                        <div class="pa-3"
+                             style="border: 1px solid var(--mud-palette-lines-default); border-radius: 8px;">
+                            <MudText Typo="Typo.overline"
+                                     Style="letter-spacing: 0.12em; opacity: 0.6; font-weight: 600;">
+                                @prop.Key
+                            </MudText>
+                            <MudText Typo="Typo.body1"
+                                     Style="font-weight: 500; word-break: break-word;">
+                                @prop.Value
+                            </MudText>
+                        </div>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+
+        @if (!string.IsNullOrEmpty(_verifyResult))
+        {
+            <MudAlert Severity="@_verifySeverity"
+                      Variant="Variant.Filled"
+                      Class="mt-4"
+                      ShowCloseIcon="true"
+                      CloseIconClicked="() => _verifyResult = null">
+                @_verifyResult
+            </MudAlert>
+        }
+    </MudPaper>
+
+    <!-- Section B: Operator Accounts -->
+    <MudPaper Elevation="0" Outlined="true" Class="pa-5 mb-4" Style="border-radius: 12px;">
+        <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-4">
+            <div class="d-flex align-center gap-3">
+                <MudIcon Icon="@Icons.Material.Filled.SupervisorAccount"
+                         Color="Color.Secondary"
+                         Size="Size.Large" />
+                <div>
+                    <MudText Typo="Typo.h6" Style="font-weight: 600;">
+                        @L["governance.operatorAccounts"]
+                    </MudText>
+                    <MudText Typo="Typo.body2" Style="opacity: 0.7;">
+                        Manage operators that can drive the runtime through tokens.
+                    </MudText>
+                </div>
+            </div>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Secondary"
+                       StartIcon="@Icons.Material.Filled.PersonAdd"
+                       OnClick="CreateOperator">
+                @L["governance.createOperator"]
+            </MudButton>
+        </div>
+
+        <MudDataGrid T="JsonElement"
+                     Items="@(_operators ?? new List<JsonElement>())"
+                     Dense="true"
+                     Hover="true"
+                     Bordered="false"
+                     Striped="false"
+                     Loading="@_loading"
+                     Elevation="0"
+                     Class="rounded">
+            <Columns>
+                <TemplateColumn Title="@L["governance.accountId"]" Sortable="false">
+                    <CellTemplate>
+                        <MudText Typo="Typo.body2"
+                                 Style="font-family: 'JetBrains Mono', Consolas, monospace;">
+                            @(ReadString(context.Item, "id", "accountId") ?? "—")
+                        </MudText>
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="@L["governance.displayName"]" Sortable="false">
+                    <CellTemplate>
+                        @(ReadString(context.Item, "displayName", "name", "username") ?? "—")
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="@L["governance.createdAt"]" Sortable="false">
+                    <CellTemplate>
+                        <MudText Typo="Typo.body2" Style="opacity: 0.8;">
+                            @(ReadString(context.Item, "createdAt", "created") ?? "—")
+                        </MudText>
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="@L["common.actions"]" Sortable="false">
+                    <CellTemplate>
+                        @{
+                            var id = ReadString(context.Item, "id", "accountId") ?? "";
+                        }
+                        <div class="d-flex gap-1">
+                            <MudTooltip Text="@L["governance.generateToken"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.VpnKey"
+                                               Size="Size.Small"
+                                               Color="Color.Tertiary"
+                                               OnClick="() => GenerateToken(id)" />
+                            </MudTooltip>
+                            <MudTooltip Text="@L["governance.deleteOperator"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                               Size="Size.Small"
+                                               Color="Color.Error"
+                                               OnClick="() => DeleteOperator(id)" />
+                            </MudTooltip>
+                        </div>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Class="pa-4" Style="opacity: 0.6;">
+                    @L["common.noData"]
+                </MudText>
+            </NoRecordsContent>
+        </MudDataGrid>
+    </MudPaper>
+
+    <!-- Section C: Organization Policy -->
+    <MudPaper Elevation="0" Outlined="true" Class="pa-5 mb-4" Style="border-radius: 12px;">
+        <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-3">
+            <div class="d-flex align-center gap-3">
+                <MudIcon Icon="@Icons.Material.Filled.Policy"
+                         Color="Color.Tertiary"
+                         Size="Size.Large" />
+                <div>
+                    <MudText Typo="Typo.h6" Style="font-weight: 600;">
+                        @L["governance.organizationPolicy"]
+                    </MudText>
+                    <MudText Typo="Typo.body2" Style="opacity: 0.7;">
+                        Raw JSON policy applied across all sessions and channels.
+                    </MudText>
+                </div>
+            </div>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Save"
+                       OnClick="SavePolicy"
+                       Disabled="_savingPolicy">
+                @if (_savingPolicy)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                }
+                @L["governance.savePolicy"]
+            </MudButton>
+        </div>
+
+        <MudTextField T="string"
+                      @bind-Value="_policyJson"
+                      Lines="14"
+                      Variant="Variant.Outlined"
+                      InputMode="InputMode.text"
+                      Style="font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace; font-size: 13px;"
+                      HelperText="JSON object describing organization-wide guardrails." />
+    </MudPaper>
+    }
+
+</MudContainer>
+
+@code {
+    private JsonElement? _deployStatus;
+    private List<JsonElement>? _operators;
+    private string _policyJson = string.Empty;
+
+    private bool _loading = true;
+    private bool _verifying;
+    private bool _savingPolicy;
+
+    private string? _verifyResult;
+    private Severity _verifySeverity = Severity.Info;
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        Auth.OnAuthStateChanged += HandleAuthChanged;
+
+        if (Auth.HasRole("admin"))
+        {
+            await LoadData();
+        }
+        else
+        {
+            _loading = false;
+        }
+    }
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    private async void HandleAuthChanged()
+    {
+        if (Auth.HasRole("admin") && _operators is null)
+        {
+            await LoadData();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        var statusTask = TryGetJsonAsync("admin/setup/status");
+        var operatorsTask = TryGetJsonAsync("admin/operator-accounts");
+        var policyTask = TryGetJsonAsync("admin/organization-policy");
+
+        await Task.WhenAll(statusTask, operatorsTask, policyTask).ConfigureAwait(false);
+
+        _deployStatus = statusTask.Result;
+        _operators = ExtractList(operatorsTask.Result, "accounts", "operators", "items");
+        _policyJson = policyTask.Result.HasValue
+            ? JsonSerializer.Serialize(policyTask.Result.Value, new JsonSerializerOptions { WriteIndented = true })
+            : "{}";
+
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task VerifyDeployment()
+    {
+        _verifying = true;
+        _verifyResult = null;
+        StateHasChanged();
+
+        try
+        {
+            using var response = await Api.GetRawAsync("admin/setup/verify").ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                _verifySeverity = Severity.Success;
+                _verifyResult = string.IsNullOrWhiteSpace(body)
+                    ? L["common.success"]
+                    : body;
+                Snackbar.Add(L["common.success"], MudBlazor.Severity.Success);
+            }
+            else
+            {
+                var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                _verifySeverity = Severity.Error;
+                _verifyResult = string.IsNullOrWhiteSpace(body)
+                    ? $"HTTP {(int)response.StatusCode}"
+                    : body;
+                Snackbar.Add(L["common.error"], MudBlazor.Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            _verifySeverity = Severity.Error;
+            _verifyResult = ex.Message;
+            Snackbar.Add(L["common.error"], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _verifying = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CreateOperator()
+    {
+        var parameters = new DialogParameters();
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+
+        var dialog = await DialogService.ShowAsync<CreateOperatorDialog>(L["governance.createOperator"], parameters, options);
+        var result = await dialog.Result;
+
+        if (result is null || result.Canceled || result.Data is not OperatorDraft draft)
+        {
+            return;
+        }
+
+        try
+        {
+            using var response = await Api.PostRawAsync(
+                "admin/operator-accounts",
+                new { username = draft.Username, displayName = draft.DisplayName, password = draft.Password })
+                .ConfigureAwait(false);
+
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], MudBlazor.Severity.Success);
+                await LoadData();
+            }
+            else
+            {
+                Snackbar.Add($"{L["common.error"]} ({(int)response.StatusCode})", MudBlazor.Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task DeleteOperator(string accountId)
+    {
+        if (string.IsNullOrEmpty(accountId)) return;
+
+        var confirmed = await DialogService.ShowMessageBoxAsync(
+            L["governance.deleteOperator"],
+            $"{accountId} ?",
+            yesText: L["common.delete"],
+            cancelText: L["common.cancel"]);
+
+        if (confirmed != true) return;
+
+        try
+        {
+            using var response = await Api.DeleteAsync($"admin/operator-accounts/{accountId}").ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], MudBlazor.Severity.Success);
+                await LoadData();
+            }
+            else
+            {
+                Snackbar.Add($"{L["common.error"]} ({(int)response.StatusCode})", MudBlazor.Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task GenerateToken(string accountId)
+    {
+        if (string.IsNullOrEmpty(accountId)) return;
+
+        try
+        {
+            using var response = await Api.PostRawAsync(
+                $"admin/operator-accounts/{accountId}/tokens",
+                new { }).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"{L["common.error"]} ({(int)response.StatusCode})", MudBlazor.Severity.Error);
+                return;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var doc = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+            var token = ReadString(doc.RootElement, "token", "value", "accessToken") ?? doc.RootElement.GetRawText();
+
+            var parameters = new DialogParameters
+            {
+                ["Token"] = token,
+                ["AccountId"] = accountId
+            };
+            var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+            await DialogService.ShowAsync<TokenRevealDialog>(L["governance.generateToken"], parameters, options);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task SavePolicy()
+    {
+        _savingPolicy = true;
+        StateHasChanged();
+
+        try
+        {
+            object? body;
+            try
+            {
+                using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(_policyJson) ? "{}" : _policyJson);
+                body = JsonSerializer.Deserialize<JsonElement>(doc.RootElement.GetRawText());
+            }
+            catch (JsonException jex)
+            {
+                Snackbar.Add($"Invalid JSON: {jex.Message}", MudBlazor.Severity.Error);
+                return;
+            }
+
+            using var response = await Api.PostRawAsync("admin/organization-policy", body).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], MudBlazor.Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"{L["common.error"]} ({(int)response.StatusCode})", MudBlazor.Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _savingPolicy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<JsonElement?> TryGetJsonAsync(string url)
+    {
+        try
+        {
+            using var response = await Api.GetRawAsync(url).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var doc = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+            return doc.RootElement.Clone();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<JsonElement>? ExtractList(JsonElement? root, params string[] candidateKeys)
+    {
+        if (root is null) return new List<JsonElement>();
+
+        var element = root.Value;
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray().Select(e => e.Clone()).ToList();
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var key in candidateKeys)
+            {
+                if (element.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                {
+                    return arr.EnumerateArray().Select(e => e.Clone()).ToList();
+                }
+            }
+        }
+
+        return new List<JsonElement>();
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> EnumerateTopLevel(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object) yield break;
+        foreach (var prop in element.EnumerateObject())
+        {
+            var value = prop.Value.ValueKind switch
+            {
+                JsonValueKind.String => prop.Value.GetString() ?? "",
+                JsonValueKind.Number => prop.Value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Null => "—",
+                JsonValueKind.Array => $"[{prop.Value.GetArrayLength()} items]",
+                JsonValueKind.Object => "{…}",
+                _ => prop.Value.GetRawText()
+            };
+            yield return new KeyValuePair<string, string>(prop.Name, value);
+        }
+    }
+
+    private static string? ReadString(JsonElement element, params string[] names)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        foreach (var name in names)
+        {
+            if (element.TryGetProperty(name, out var prop))
+            {
+                return prop.ValueKind switch
+                {
+                    JsonValueKind.String => prop.GetString(),
+                    JsonValueKind.Number => prop.GetRawText(),
+                    JsonValueKind.True => "true",
+                    JsonValueKind.False => "false",
+                    _ => null
+                };
+            }
+        }
+        return null;
+    }
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+        Auth.OnAuthStateChanged -= HandleAuthChanged;
+    }
+}

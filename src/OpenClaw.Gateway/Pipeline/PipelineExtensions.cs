@@ -1,6 +1,8 @@
 using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using OpenClaw.Channels;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Middleware;
@@ -25,6 +27,53 @@ internal static class PipelineExtensions
         ConfigureCors(app, runtime);
 
         app.UseStaticFiles();
+
+        var dashboardPhysicalPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "dashboard");
+        if (Directory.Exists(dashboardPhysicalPath))
+        {
+            var contentTypeProvider = new FileExtensionContentTypeProvider();
+            var dashboardRoot = Path.GetFullPath(dashboardPhysicalPath);
+            if (!dashboardRoot.EndsWith(Path.DirectorySeparatorChar))
+                dashboardRoot += Path.DirectorySeparatorChar;
+
+            app.Map("/dashboard", dashboardApp =>
+            {
+                dashboardApp.UseStaticFiles(new StaticFileOptions
+                {
+                    FileProvider = new PhysicalFileProvider(dashboardPhysicalPath),
+                    ContentTypeProvider = contentTypeProvider
+                });
+
+                dashboardApp.Run(async context =>
+                {
+                    if (context.Request.Path.HasValue && Path.HasExtension(context.Request.Path.Value))
+                    {
+                        var relativePath = context.Request.Path.Value.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+                        var filePath = Path.GetFullPath(Path.Combine(dashboardPhysicalPath, relativePath));
+                        if (filePath.StartsWith(dashboardRoot, StringComparison.OrdinalIgnoreCase) && File.Exists(filePath))
+                        {
+                            if (contentTypeProvider.TryGetContentType(filePath, out var contentType))
+                                context.Response.ContentType = contentType;
+                            await context.Response.SendFileAsync(filePath);
+                            return;
+                        }
+
+                        context.Response.StatusCode = StatusCodes.Status404NotFound;
+                        return;
+                    }
+
+                    var htmlPath = Path.Combine(dashboardPhysicalPath, "index.html");
+                    if (File.Exists(htmlPath))
+                    {
+                        context.Response.ContentType = "text/html";
+                        await context.Response.SendFileAsync(htmlPath);
+                        return;
+                    }
+
+                    context.Response.StatusCode = StatusCodes.Status404NotFound;
+                });
+            });
+        }
 
         app.UseWebSockets(new WebSocketOptions
         {
