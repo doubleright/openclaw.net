@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using OpenClaw.Core.Abstractions;
 
@@ -286,7 +287,10 @@ public sealed class ReadSkillResourceTool : ITool
             var rootWithSep = skillRoot.EndsWith(Path.DirectorySeparatorChar)
                 ? skillRoot
                 : skillRoot + Path.DirectorySeparatorChar;
-            return resolved.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase);
+            return resolved.StartsWith(rootWithSep,
+                RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal);
         }
         catch
         {

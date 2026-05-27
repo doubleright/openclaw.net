@@ -5,5 +5,6 @@ public record AuthState(
     string? DisplayName,
     string Role,
     bool IsBootstrapAdmin,
-    string AuthMode
+    string AuthMode,
+    string? CsrfToken = null
 );

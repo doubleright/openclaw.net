@@ -364,7 +364,15 @@ else
         try
         {
             var list = await Api.GetAsync<MemoryNoteListResponse>("admin/memory/notes");
-            _notes = list?.Items?.ToList() ?? new List<MemoryNote>();
+            if (list is null)
+            {
+                _notes = new List<MemoryNote>();
+                Snackbar.Add(L["memory.loadError"], Severity.Error);
+            }
+            else
+            {
+                _notes = list.Items?.ToList() ?? new List<MemoryNote>();
+            }
 
             if (_selected is not null)
             {

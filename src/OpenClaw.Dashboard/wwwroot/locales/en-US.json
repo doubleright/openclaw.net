@@ -292,7 +292,8 @@
     "operatorRequired": "Operator role required to manage memory notes.",
     "importSuccess": "Memory archive imported.",
     "exportEmpty": "Memory archive is empty.",
-    "confirmDelete": "Are you sure you want to delete this note?"
+    "confirmDelete": "Are you sure you want to delete this note?",
+    "loadError": "Failed to load notes — the server returned an error."
   },
   "ops": {
     "title": "Operations",

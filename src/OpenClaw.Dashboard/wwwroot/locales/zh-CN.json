@@ -292,7 +292,8 @@
     "operatorRequired": "需要 Operator 角色才能管理记忆笔记。",
     "importSuccess": "记忆归档已导入。",
     "exportEmpty": "记忆归档为空。",
-    "confirmDelete": "确定要删除此笔记吗？"
+    "confirmDelete": "确定要删除此笔记吗？",
+    "loadError": "笔记加载失败——服务器返回了错误。"
   },
   "ops": {
     "title": "运维",

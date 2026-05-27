@@ -299,8 +299,7 @@
         StateHasChanged();
         try
         {
-            _data = await Api.GetAsync<SkillCostEstimateResponse>("admin/skills/cost-estimate")
-                .ConfigureAwait(false);
+            _data = await Api.GetAsync<SkillCostEstimateResponse>("admin/skills/cost-estimate");
             if (_data is null)
             {
                 _error = L["skillsCost.loadFailed"];

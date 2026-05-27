@@ -142,6 +142,7 @@ public class AuthService
     {
         var changed = !Equals(CurrentAuth, state);
         CurrentAuth = state;
+        _api.SetCsrfToken(state?.CsrfToken);
         if (changed)
         {
             OnAuthStateChanged?.Invoke();

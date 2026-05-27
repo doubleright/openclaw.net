@@ -1,3 +1,4 @@
+using System.Security;
 using System.Text.Json;
 using OpenClaw.Core.Abstractions;
 
@@ -154,9 +155,7 @@ public sealed class LoadSkillTool : ITool
             sb.Append("  <resource kind=\"");
             sb.Append(kind);
             sb.Append("\" path=\"");
-            sb.Append(resource.RelativePath);
-            sb.Append("\" abs=\"");
-            sb.Append(resource.AbsolutePath);
+            sb.Append(SecurityElement.Escape(resource.RelativePath));
             sb.AppendLine("\" />");
         }
         sb.Append("</skill-resources>");
