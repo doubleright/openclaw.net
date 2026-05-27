@@ -264,6 +264,7 @@ internal static class EndpointHelpers
             scope.StartsWith("admin.provider-policies", StringComparison.Ordinal) ||
             scope.StartsWith("admin.providers.reset", StringComparison.Ordinal) ||
             scope.StartsWith("admin.plugins.mutate", StringComparison.Ordinal) ||
+            scope.StartsWith("admin.skills", StringComparison.Ordinal) ||
             scope.StartsWith("admin.rate-limits.mutate", StringComparison.Ordinal) ||
             scope.StartsWith("integration.accounts", StringComparison.Ordinal))
         {

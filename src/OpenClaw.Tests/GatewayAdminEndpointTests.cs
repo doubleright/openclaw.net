@@ -754,6 +754,48 @@ public sealed class GatewayAdminEndpointTests
     }
 
     [Fact]
+    public async Task ViewerRole_CannotReadSkillsAdminEndpoints()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        var viewerToken = CreateOperatorToken(harness, OperatorRoleNames.Viewer, "viewer-skills");
+
+        using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/skills");
+        listRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", viewerToken);
+        using var listResponse = await harness.Client.SendAsync(listRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, listResponse.StatusCode);
+
+        using var estimateRequest = new HttpRequestMessage(HttpMethod.Get, "/admin/skills/cost-estimate");
+        estimateRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", viewerToken);
+        using var estimateResponse = await harness.Client.SendAsync(estimateRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, estimateResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task SkillsCostEstimate_DoesNotRefreshRuntimeLoadedSkills()
+    {
+        await using var harness = await CreateHarnessAsync(nonLoopbackBind: true);
+        SkillDefinition[] loadedSkills =
+        [
+            new()
+            {
+                Name = "existing",
+                Description = "Existing runtime skill.",
+                Instructions = "Body.",
+                Location = "/virtual/existing",
+                Source = SkillSource.Managed
+            }
+        ];
+        harness.Runtime.LoadedSkills = loadedSkills;
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/admin/skills/cost-estimate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", harness.AuthToken);
+        using var response = await harness.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Same(loadedSkills, harness.Runtime.LoadedSkills);
+    }
+
+    [Fact]
     public async Task MissingBootstrapToken_FailsClosed_WithoutThrowing()
     {
         await using var harness = await CreateHarnessAsync(nonLoopbackBind: true, config =>

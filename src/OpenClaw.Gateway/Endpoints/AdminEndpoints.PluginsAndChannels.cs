@@ -73,7 +73,6 @@ internal static partial class AdminEndpoints
                 return authResult.Failure;
 
             var loadedSkills = LoadCurrentSkillDefinitions(startup, runtime);
-            runtime.LoadedSkills = loadedSkills;
 
             var eagerTotal = SkillPromptBuilder.EstimateCharacterCost(loadedSkills);
             var indexTotal = SkillPromptBuilder.EstimateIndexCharacterCost(loadedSkills);

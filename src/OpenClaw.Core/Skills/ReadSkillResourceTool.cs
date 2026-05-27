@@ -109,6 +109,9 @@ public sealed class ReadSkillResourceTool : ITool
             if (!info.Exists)
                 return $"Error: resource '{resource.RelativePath}' no longer exists on disk.";
 
+            if (ResourcePathContainsReparsePoint(skill.Location, resource.AbsolutePath))
+                return $"Error: resource '{resource.RelativePath}' resolves through a symlink or reparse point and was rejected.";
+
             if (info.Length > _maxResourceBytes)
                 return $"Error: resource '{resource.RelativePath}' is {info.Length} bytes (max {_maxResourceBytes}). Read it via the workspace file tools instead.";
 
@@ -295,6 +298,42 @@ public sealed class ReadSkillResourceTool : ITool
         catch
         {
             return false;
+        }
+    }
+
+    private static bool ResourcePathContainsReparsePoint(string skillLocation, string resourceAbsolutePath)
+    {
+        if (string.IsNullOrWhiteSpace(skillLocation))
+            return false;
+
+        try
+        {
+            var skillRoot = Path.GetFullPath(skillLocation);
+            var resolved = Path.GetFullPath(resourceAbsolutePath);
+            var relative = Path.GetRelativePath(skillRoot, resolved);
+            if (relative == ".." ||
+                relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal) ||
+                Path.IsPathRooted(relative))
+            {
+                return true;
+            }
+
+            var current = skillRoot;
+            foreach (var segment in relative.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries))
+            {
+                current = Path.Combine(current, segment);
+                if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+                    return true;
+            }
+
+            return false;
+        }
+        catch
+        {
+            return true;
         }
     }
 }

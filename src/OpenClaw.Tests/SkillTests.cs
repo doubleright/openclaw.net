@@ -1116,6 +1116,27 @@ public class LoadSkillToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_EscapesResourceManifestPath()
+    {
+        var resources = new List<SkillResource>
+        {
+            new()
+            {
+                Name = "bad.md",
+                RelativePath = "references/bad\"<>&'.md",
+                AbsolutePath = "/skills/rich/references/bad.md",
+                Kind = SkillResourceKind.Reference
+            }
+        };
+        var tool = new LoadSkillTool([Skill("rich", resources: resources)]);
+
+        var result = await tool.ExecuteAsync("""{"skill":"rich"}""", default);
+
+        Assert.Contains("path=\"references/bad&quot;&lt;&gt;&amp;&apos;.md\"", result);
+        Assert.DoesNotContain("bad\"<>&'.md", result);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_AcceptsSkillNameAlias()
     {
         var tool = new LoadSkillTool([Skill("alpha")]);
@@ -1325,6 +1346,50 @@ public class ReadSkillResourceToolTests : IDisposable
 
         Assert.StartsWith("Error:", result);
         Assert.Contains("outside skill root", result);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RejectsSymlinkResourceEscapingSkillRoot()
+    {
+        var skillDir = Path.Combine(_root, "alpha");
+        var referencesDir = Path.Combine(skillDir, "references");
+        Directory.CreateDirectory(referencesDir);
+        var outsidePath = Path.Combine(_root, "secret.md");
+        File.WriteAllText(outsidePath, "secret");
+        var linkPath = Path.Combine(referencesDir, "guide.md");
+
+        try
+        {
+            File.CreateSymbolicLink(linkPath, outsidePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        var skill = new SkillDefinition
+        {
+            Name = "alpha",
+            Description = "d",
+            Instructions = "b",
+            Location = skillDir,
+            Resources =
+            [
+                new SkillResource
+                {
+                    Name = "guide.md",
+                    RelativePath = "references/guide.md",
+                    AbsolutePath = linkPath,
+                    Kind = SkillResourceKind.Reference
+                }
+            ]
+        };
+        var tool = new ReadSkillResourceTool([skill]);
+
+        var result = await tool.ExecuteAsync("""{"skill":"alpha","resource":"references/guide.md"}""", default);
+
+        Assert.StartsWith("Error:", result);
+        Assert.Contains("symlink", result);
     }
 
     [Fact]
