@@ -586,10 +586,27 @@
             using var resp = await Api.GetRawAsync($"/admin/sessions/{session.SessionId}");
             if (resp.IsSuccessStatusCode)
             {
-                var detail = await resp.Content.ReadFromJsonAsync<SessionDetail>(Api.JsonOptions);
-                _selectedDetail = detail ?? new SessionDetail(
-                    session.SessionId, session.ChannelId, session.SenderId,
-                    session.LastActive, session.Metadata, new List<SessionMessage>());
+                using var stream = await resp.Content.ReadAsStreamAsync();
+                using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+                var root = doc.RootElement;
+
+                // Gateway returns AdminSessionDetailResponse:
+                // { session: Session{id, channelId, senderId, lastActiveAt, history[ChatTurn]}, isActive, branchCount, metadata }.
+                if (root.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && root.TryGetProperty("session", out var sessionEl)
+                    && sessionEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    _selectedDetail = BuildSessionDetailFromAdmin(session, root, sessionEl);
+                }
+                else
+                {
+                    // Fallback: try direct deserialization for backends still returning the legacy shape.
+                    var legacy = System.Text.Json.JsonSerializer.Deserialize<SessionDetail>(
+                        root.GetRawText(), Api.JsonOptions);
+                    _selectedDetail = legacy ?? new SessionDetail(
+                        session.SessionId, session.ChannelId, session.SenderId,
+                        session.LastActive, session.Metadata, new List<SessionMessage>());
+                }
             }
             else
             {
@@ -858,5 +875,59 @@
         if (!el.TryGetProperty(name, out var v) || v.ValueKind != System.Text.Json.JsonValueKind.String)
             return null;
         return v.TryGetDateTime(out var dt) ? dt : null;
+    }
+
+    /// <summary>
+    /// Maps Gateway's <c>AdminSessionDetailResponse</c> envelope (containing a nested
+    /// <c>Session</c> with <c>history</c> of <c>ChatTurn</c>, plus <c>isActive</c> /
+    /// <c>branchCount</c> / <c>metadata</c>) into the Dashboard <see cref="SessionDetail"/> shape.
+    /// </summary>
+    private static SessionDetail BuildSessionDetailFromAdmin(
+        SessionInfo fallback,
+        System.Text.Json.JsonElement root,
+        System.Text.Json.JsonElement sessionEl)
+    {
+        var id = ReadJsonString(sessionEl, "id") ?? fallback.SessionId;
+        var channelId = ReadJsonString(sessionEl, "channelId") ?? fallback.ChannelId;
+        var senderId = ReadJsonString(sessionEl, "senderId") ?? fallback.SenderId;
+        var lastActive = ReadJsonDateTime(sessionEl, "lastActiveAt") ?? fallback.LastActive;
+
+        var messages = new List<SessionMessage>();
+        if (sessionEl.TryGetProperty("history", out var history)
+            && history.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var turn in history.EnumerateArray())
+            {
+                if (turn.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                var role = ReadJsonString(turn, "role") ?? "unknown";
+                var content = ReadJsonString(turn, "content");
+                var timestamp = ReadJsonDateTime(turn, "timestamp");
+                messages.Add(new SessionMessage(role, content, timestamp));
+            }
+        }
+
+        // Fold isActive / branchCount / metadata snapshot into the Dictionary so the
+        // existing metadata renderer keeps working without introducing a new model.
+        var metadata = new Dictionary<string, object>(StringComparer.Ordinal);
+        if (root.TryGetProperty("isActive", out var isActive)
+            && isActive.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+        {
+            metadata["isActive"] = isActive.GetBoolean();
+        }
+        if (root.TryGetProperty("branchCount", out var branchCount)
+            && branchCount.ValueKind == System.Text.Json.JsonValueKind.Number
+            && branchCount.TryGetInt32(out var bc))
+        {
+            metadata["branchCount"] = bc;
+        }
+        if (root.TryGetProperty("metadata", out var metaEl)
+            && metaEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            // Keep the snapshot as a JsonElement so FormatMetadata / ExtractBranches can read it.
+            metadata["snapshot"] = metaEl.Clone();
+        }
+
+        return new SessionDetail(id, channelId, senderId, lastActive,
+            metadata.Count == 0 ? null : metadata, messages);
     }
 }
