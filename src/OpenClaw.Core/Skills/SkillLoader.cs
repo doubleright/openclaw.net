@@ -300,6 +300,11 @@ public static class SkillLoader
         // Replace {baseDir} placeholder in instructions
         body = body.Replace("{baseDir}", skillDir);
 
+        // Progressive disclosure (level 3): surface auxiliary files under
+        // references/ and scripts/ in the manifest. The full file content is
+        // *not* loaded here — only the listing — so the model can fetch on demand.
+        var resources = ScanSkillResources(skillDir);
+
         return new SkillDefinition
         {
             Name = name,
@@ -312,8 +317,70 @@ public static class SkillLoader
             DisableModelInvocation = disableModelInvocation,
             CommandDispatch = commandDispatch,
             CommandTool = commandTool,
-            CommandArgMode = commandArgMode
+            CommandArgMode = commandArgMode,
+            Resources = resources
         };
+    }
+
+    /// <summary>
+    /// Scan a skill directory for auxiliary resources under <c>references/</c> and <c>scripts/</c>.
+    /// Returns an empty list if the skill directory does not exist (e.g. in unit tests).
+    /// </summary>
+    internal static IReadOnlyList<SkillResource> ScanSkillResources(string skillDir)
+    {
+        if (string.IsNullOrWhiteSpace(skillDir) || !TryDirectoryExists(skillDir))
+            return [];
+
+        var list = new List<SkillResource>();
+        AppendResourcesFromSubdir(list, skillDir, "references", SkillResourceKind.Reference);
+        AppendResourcesFromSubdir(list, skillDir, "scripts", SkillResourceKind.Script);
+        return list;
+    }
+
+    private static void AppendResourcesFromSubdir(
+        List<SkillResource> sink,
+        string skillDir,
+        string subDir,
+        SkillResourceKind kind)
+    {
+        var dir = Path.Combine(skillDir, subDir);
+        if (!TryDirectoryExists(dir))
+            return;
+
+        try
+        {
+            var enumerationOptions = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.Hidden
+            };
+
+            foreach (var file in Directory.EnumerateFiles(dir, "*", enumerationOptions))
+            {
+                string relative;
+                try
+                {
+                    relative = Path.GetRelativePath(skillDir, file).Replace('\\', '/');
+                }
+                catch (Exception ex) when (IsPathException(ex))
+                {
+                    continue;
+                }
+
+                sink.Add(new SkillResource
+                {
+                    Name = Path.GetFileName(file),
+                    RelativePath = relative,
+                    AbsolutePath = Path.GetFullPath(file),
+                    Kind = kind
+                });
+            }
+        }
+        catch (Exception ex) when (IsPathException(ex))
+        {
+            // Inaccessible subdirectory: ignore, resources stay as already-collected.
+        }
     }
 
     /// <summary>

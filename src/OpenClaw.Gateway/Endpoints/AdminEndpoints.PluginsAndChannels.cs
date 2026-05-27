@@ -66,6 +66,53 @@ internal static partial class AdminEndpoints
             }, CoreJsonContext.Default.SkillListResponse);
         });
 
+        app.MapGet("/admin/skills/cost-estimate", (HttpContext ctx) =>
+        {
+            var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.skills");
+            if (authResult.Failure is not null)
+                return authResult.Failure;
+
+            var loadedSkills = LoadCurrentSkillDefinitions(startup, runtime);
+            runtime.LoadedSkills = loadedSkills;
+
+            var eagerTotal = SkillPromptBuilder.EstimateCharacterCost(loadedSkills);
+            var indexTotal = SkillPromptBuilder.EstimateIndexCharacterCost(loadedSkills);
+            var saved = Math.Max(0, eagerTotal - indexTotal);
+            var ratio = eagerTotal > 0 ? (double)saved / eagerTotal : 0d;
+
+            var items = loadedSkills
+                .Select(skill => new SkillCostBreakdown
+                {
+                    Name = skill.Name,
+                    Description = skill.Description,
+                    EagerCharacters = SkillPromptBuilder.EstimateSkillEagerCost(skill),
+                    IndexCharacters = SkillPromptBuilder.EstimateSkillIndexCost(skill),
+                    ResourceCount = skill.Resources.Count,
+                    InstructionsLength = skill.Instructions.Length,
+                    ExcludedFromModel = skill.DisableModelInvocation
+                })
+                .OrderByDescending(static b => b.EagerCharacters)
+                .ThenBy(static b => b.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            var response = new SkillCostEstimateResponse
+            {
+                TotalSkills = loadedSkills.Count,
+                ModelInvocableSkills = loadedSkills.Count(static s => !s.DisableModelInvocation),
+                EagerCharacters = eagerTotal,
+                IndexCharacters = indexTotal,
+                CharactersSaved = saved,
+                SavedRatio = ratio,
+                // Rough 4-chars-per-token heuristic; UI labels this as an estimate.
+                EagerTokensEstimate = (int)Math.Ceiling(eagerTotal / 4d),
+                IndexTokensEstimate = (int)Math.Ceiling(indexTotal / 4d),
+                Items = items,
+                GeneratedAt = DateTimeOffset.UtcNow
+            };
+
+            return Results.Json(response, CoreJsonContext.Default.SkillCostEstimateResponse);
+        });
+
         app.MapGet("/admin/compatibility/catalog", (HttpContext ctx) =>
         {
             var authResult = AuthorizeOperator(ctx, startup, browserSessions, operations, requireCsrf: false, endpointScope: "admin.compatibility");

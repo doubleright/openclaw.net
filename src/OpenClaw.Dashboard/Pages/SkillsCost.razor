@@ -1,0 +1,342 @@
+@page "/skills-cost"
+@implements IDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>@L["skillsCost.title"] · OpenClaw</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+
+    <div class="mb-6">
+        <MudText Typo="Typo.overline" Style="letter-spacing: 0.18em; opacity: 0.6;">
+            OPENCLAW · PROGRESSIVE DISCLOSURE
+        </MudText>
+        <MudText Typo="Typo.h4" Style="font-weight: 600; letter-spacing: -0.02em;">
+            @L["skillsCost.title"]
+        </MudText>
+        <MudText Typo="Typo.body2" Style="opacity: 0.7; margin-top: 4px;">
+            @L["skillsCost.subtitle"]
+        </MudText>
+    </div>
+
+    @if (!Auth.HasRole("admin"))
+    {
+        <MudAlert Severity="Severity.Warning"
+                  Variant="Variant.Outlined"
+                  Icon="@Icons.Material.Filled.Lock"
+                  Class="my-4">
+            <MudText Typo="Typo.subtitle1" Style="font-weight: 600;">
+                @L["skillsCost.adminRequired"]
+            </MudText>
+            <MudText Typo="Typo.body2">@L["auth.notAuthenticated"]</MudText>
+        </MudAlert>
+    }
+    else
+    {
+        @if (_loading)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="mb-4" />
+        }
+
+        @* ── Action bar ─────────────────────────────────────────────────── *@
+        <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-4">
+            <MudText Typo="Typo.caption" Style="opacity: 0.6;">
+                @if (_data is not null)
+                {
+                    @($"{L["skillsCost.generatedAt"]}: {_data.GeneratedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}")
+                }
+            </MudText>
+            <MudButton StartIcon="@Icons.Material.Filled.Refresh"
+                       Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       OnClick="LoadAsync"
+                       Disabled="_loading">
+                @L["common.refresh"]
+            </MudButton>
+        </div>
+
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">
+                @_error
+            </MudAlert>
+        }
+
+        @if (_data is not null)
+        {
+            @* ── Summary cards ──────────────────────────────────────────── *@
+            <MudGrid Spacing="3" Class="mb-4">
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Elevation="0" Outlined="true" Class="pa-4" Style="border-radius: 12px;">
+                        <MudText Typo="Typo.overline" Style="letter-spacing: 0.12em; opacity: 0.6;">
+                            @L["skillsCost.totalSkills"]
+                        </MudText>
+                        <MudText Typo="Typo.h4" Style="font-weight: 700;">
+                            @_data.TotalSkills
+                        </MudText>
+                        <MudText Typo="Typo.caption" Style="opacity: 0.7;">
+                            @($"{_data.ModelInvocableSkills} {L["skillsCost.modelInvocable"]}")
+                        </MudText>
+                    </MudPaper>
+                </MudItem>
+
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Elevation="0" Outlined="true" Class="pa-4" Style="border-radius: 12px;">
+                        <MudText Typo="Typo.overline" Style="letter-spacing: 0.12em; opacity: 0.6;">
+                            @L["skillsCost.eagerBudget"]
+                        </MudText>
+                        <MudText Typo="Typo.h4" Style="font-weight: 700; color: var(--mud-palette-warning);">
+                            @FormatNumber(_data.EagerCharacters)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Style="opacity: 0.7;">
+                            @($"≈ {FormatNumber(_data.EagerTokensEstimate)} {L["skillsCost.tokens"]}")
+                        </MudText>
+                    </MudPaper>
+                </MudItem>
+
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Elevation="0" Outlined="true" Class="pa-4" Style="border-radius: 12px;">
+                        <MudText Typo="Typo.overline" Style="letter-spacing: 0.12em; opacity: 0.6;">
+                            @L["skillsCost.indexBudget"]
+                        </MudText>
+                        <MudText Typo="Typo.h4" Style="font-weight: 700; color: var(--mud-palette-success);">
+                            @FormatNumber(_data.IndexCharacters)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Style="opacity: 0.7;">
+                            @($"≈ {FormatNumber(_data.IndexTokensEstimate)} {L["skillsCost.tokens"]}")
+                        </MudText>
+                    </MudPaper>
+                </MudItem>
+
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Elevation="0" Outlined="true" Class="pa-4" Style="border-radius: 12px;">
+                        <MudText Typo="Typo.overline" Style="letter-spacing: 0.12em; opacity: 0.6;">
+                            @L["skillsCost.saved"]
+                        </MudText>
+                        <MudText Typo="Typo.h4" Style="font-weight: 700; color: var(--mud-palette-primary);">
+                            @($"{(_data.SavedRatio * 100):F1}%")
+                        </MudText>
+                        <MudText Typo="Typo.caption" Style="opacity: 0.7;">
+                            @($"{FormatNumber(_data.CharactersSaved)} {L["skillsCost.charsSaved"]}")
+                        </MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            @* ── Stacked comparison bar ────────────────────────────────── *@
+            <MudPaper Elevation="0" Outlined="true" Class="pa-5 mb-4" Style="border-radius: 12px;">
+                <MudText Typo="Typo.h6" Style="font-weight: 600;" Class="mb-1">
+                    @L["skillsCost.comparison"]
+                </MudText>
+                <MudText Typo="Typo.body2" Style="opacity: 0.7;" Class="mb-4">
+                    @L["skillsCost.comparisonHint"]
+                </MudText>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-space-between mb-1">
+                        <MudText Typo="Typo.caption" Style="font-weight: 600;">
+                            @L["skillsCost.eagerMode"] (Build)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Style="opacity: 0.7;">
+                            @FormatNumber(_data.EagerCharacters)
+                        </MudText>
+                    </div>
+                    <MudProgressLinear Color="Color.Warning"
+                                       Value="100"
+                                       Striped="false"
+                                       Rounded="true"
+                                       Size="Size.Large" />
+                </div>
+
+                <div>
+                    <div class="d-flex justify-space-between mb-1">
+                        <MudText Typo="Typo.caption" Style="font-weight: 600;">
+                            @L["skillsCost.indexMode"] (BuildIndex)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Style="opacity: 0.7;">
+                            @FormatNumber(_data.IndexCharacters)
+                        </MudText>
+                    </div>
+                    <MudProgressLinear Color="Color.Success"
+                                       Value="@IndexRatioPercent"
+                                       Striped="false"
+                                       Rounded="true"
+                                       Size="Size.Large" />
+                </div>
+            </MudPaper>
+
+            @* ── Per-skill breakdown table ─────────────────────────────── *@
+            <MudPaper Elevation="0" Outlined="true" Class="pa-5" Style="border-radius: 12px;">
+                <MudText Typo="Typo.h6" Style="font-weight: 600;" Class="mb-1">
+                    @L["skillsCost.breakdown"]
+                </MudText>
+                <MudText Typo="Typo.body2" Style="opacity: 0.7;" Class="mb-4">
+                    @L["skillsCost.breakdownHint"]
+                </MudText>
+
+                @if (_data.Items.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                        @L["common.noData"]
+                    </MudAlert>
+                }
+                else
+                {
+                    <MudTable Items="_data.Items"
+                              Dense="true"
+                              Hover="true"
+                              Bordered="false"
+                              Striped="true"
+                              SortLabel="@L["common.sortBy"]"
+                              T="SkillCostBreakdown">
+                        <HeaderContent>
+                            <MudTh>
+                                <MudTableSortLabel SortBy="new Func<SkillCostBreakdown,object>(x=>x.Name)" T="SkillCostBreakdown">
+                                    @L["skillsCost.col.name"]
+                                </MudTableSortLabel>
+                            </MudTh>
+                            <MudTh>@L["skillsCost.col.resources"]</MudTh>
+                            <MudTh>
+                                <MudTableSortLabel SortBy="new Func<SkillCostBreakdown,object>(x=>x.EagerCharacters)"
+                                                   InitialDirection="SortDirection.Descending"
+                                                   T="SkillCostBreakdown">
+                                    @L["skillsCost.col.eager"]
+                                </MudTableSortLabel>
+                            </MudTh>
+                            <MudTh>
+                                <MudTableSortLabel SortBy="new Func<SkillCostBreakdown,object>(x=>x.IndexCharacters)" T="SkillCostBreakdown">
+                                    @L["skillsCost.col.index"]
+                                </MudTableSortLabel>
+                            </MudTh>
+                            <MudTh>@L["skillsCost.col.savedPct"]</MudTh>
+                            <MudTh>@L["skillsCost.col.status"]</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="@L["skillsCost.col.name"]">
+                                <div style="font-weight: 600;">@context.Name</div>
+                                @if (!string.IsNullOrWhiteSpace(context.Description))
+                                {
+                                    <div style="opacity: 0.6; font-size: 0.78rem; max-width: 320px;">
+                                        @Truncate(context.Description, 80)
+                                    </div>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="@L["skillsCost.col.resources"]">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Default">
+                                    @context.ResourceCount
+                                </MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="@L["skillsCost.col.eager"]" Style="font-family: 'JetBrains Mono', monospace;">
+                                @FormatNumber(context.EagerCharacters)
+                            </MudTd>
+                            <MudTd DataLabel="@L["skillsCost.col.index"]" Style="font-family: 'JetBrains Mono', monospace;">
+                                @FormatNumber(context.IndexCharacters)
+                            </MudTd>
+                            <MudTd DataLabel="@L["skillsCost.col.savedPct"]">
+                                @if (context.EagerCharacters > 0)
+                                {
+                                    var pct = 100.0 * (context.EagerCharacters - context.IndexCharacters) / context.EagerCharacters;
+                                    <MudChip T="string" Size="Size.Small" Color="@SavingColor(pct)" Variant="Variant.Filled">
+                                        @($"{pct:F1}%")
+                                    </MudChip>
+                                }
+                                else
+                                {
+                                    <span style="opacity:0.4;">—</span>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="@L["skillsCost.col.status"]">
+                                @if (context.ExcludedFromModel)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Text">
+                                        @L["skillsCost.excluded"]
+                                    </MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">
+                                        @L["skillsCost.active"]
+                                    </MudChip>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                        <PagerContent>
+                            <MudTablePager PageSizeOptions="new[] { 10, 25, 50, 100 }" />
+                        </PagerContent>
+                    </MudTable>
+                }
+            </MudPaper>
+        }
+    }
+</MudContainer>
+
+@code {
+    private bool _loading;
+    private string? _error;
+    private SkillCostEstimateResponse? _data;
+
+    private int IndexRatioPercent =>
+        _data is null || _data.EagerCharacters == 0
+            ? 0
+            : (int)Math.Round(100.0 * _data.IndexCharacters / _data.EagerCharacters);
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        Auth.OnAuthStateChanged += HandleLanguageChanged;
+        if (Auth.HasRole("admin"))
+        {
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+        try
+        {
+            _data = await Api.GetAsync<SkillCostEstimateResponse>("admin/skills/cost-estimate")
+                .ConfigureAwait(false);
+            if (_data is null)
+            {
+                _error = L["skillsCost.loadFailed"];
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"{L["skillsCost.loadFailed"]}: {ex.Message}";
+            Snackbar.Add(_error, Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string FormatNumber(int n) => n.ToString("N0");
+
+    private static string Truncate(string s, int max)
+        => s.Length <= max ? s : s.Substring(0, max - 1) + "…";
+
+    private static Color SavingColor(double pct) => pct switch
+    {
+        >= 80 => Color.Success,
+        >= 50 => Color.Primary,
+        >= 20 => Color.Info,
+        > 0 => Color.Warning,
+        _ => Color.Default
+    };
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+        Auth.OnAuthStateChanged -= HandleLanguageChanged;
+    }
+}

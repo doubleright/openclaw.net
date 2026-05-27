@@ -18,6 +18,25 @@ public sealed class SkillsConfig
 
     /// <summary>Optional allowlist for bundled skills only. If set, only listed bundled skills are eligible.</summary>
     public string[] AllowBundled { get; set; } = [];
+
+    /// <summary>
+    /// Optional override for the system-prompt template that surfaces the skill index.
+    /// Supports the placeholders:
+    /// <list type="bullet">
+    ///   <item><description><c>{skills}</c> (required) — replaced with the &lt;skill&gt; XML entries.</description></item>
+    ///   <item><description><c>{load_instruction}</c> — replaced with the <c>load_skill</c> usage hint.</description></item>
+    ///   <item><description><c>{resource_instruction}</c> — replaced with the <c>read_skill_resource</c> usage hint when at least one skill exposes resources, otherwise an empty string.</description></item>
+    /// </list>
+    /// When null or whitespace, <see cref="SkillPromptBuilder.BuildIndex"/> falls back to its built-in default template.
+    /// </summary>
+    public string? InstructionPrompt { get; set; }
+
+    /// <summary>
+    /// Maximum bytes returned by a single <c>read_skill_resource</c> tool call. Resources larger
+    /// than this are rejected with an error pointing the model at workspace file tools instead.
+    /// Values &lt;= 0 fall back to the built-in default (256 KB).
+    /// </summary>
+    public int MaxResourceReadBytes { get; set; } = 256 * 1024;
 }
 
 /// <summary>
@@ -97,6 +116,13 @@ public sealed class SkillDefinition
     public string? CommandDispatch { get; init; }
     public string? CommandTool { get; init; }
     public string? CommandArgMode { get; init; }
+
+    /// <summary>
+    /// Auxiliary files discovered under <c>references/</c> and <c>scripts/</c> in the skill directory.
+    /// Surfaced in the prompt index so the model can fetch them on demand
+    /// (Anthropic-style progressive disclosure, level 3).
+    /// </summary>
+    public IReadOnlyList<SkillResource> Resources { get; init; } = [];
 }
 
 /// <summary>
@@ -109,6 +135,36 @@ public enum SkillSource : byte
     Workspace,
     Extra,
     Plugin
+}
+
+/// <summary>
+/// Kind of auxiliary skill resource (controls how the model is expected to use it).
+/// </summary>
+public enum SkillResourceKind : byte
+{
+    /// <summary>Read-only reference material under <c>references/</c>.</summary>
+    Reference,
+    /// <summary>Executable helper under <c>scripts/</c>.</summary>
+    Script
+}
+
+/// <summary>
+/// Auxiliary file packaged alongside a skill (under <c>references/</c> or <c>scripts/</c>).
+/// Listed in the prompt index but loaded on demand to keep token cost low.
+/// </summary>
+public sealed class SkillResource
+{
+    /// <summary>File name (e.g. <c>lookup.md</c>).</summary>
+    public required string Name { get; init; }
+
+    /// <summary>POSIX-style path relative to the skill root (e.g. <c>references/lookup.md</c>).</summary>
+    public required string RelativePath { get; init; }
+
+    /// <summary>Absolute path on disk.</summary>
+    public required string AbsolutePath { get; init; }
+
+    /// <summary>Whether the resource is reference material or an executable script.</summary>
+    public required SkillResourceKind Kind { get; init; }
 }
 
 /// <summary>

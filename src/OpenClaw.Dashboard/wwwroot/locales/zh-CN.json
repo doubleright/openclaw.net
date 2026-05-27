@@ -38,7 +38,8 @@
     "reject": "拒绝",
     "rollback": "回滚",
     "forbidden": "无权访问",
-    "requires_operator": "需要 Operator 角色"
+    "requires_operator": "需要 Operator 角色",
+    "sortBy": "排序"
   },
   "nav": {
     "overview": "概览",
@@ -54,7 +55,8 @@
     "sessions": "会话",
     "settings": "设置",
     "channels": "通道",
-    "whatsapp": "WhatsApp"
+    "whatsapp": "WhatsApp",
+    "skillsCost": "技能开销"
   },
   "auth": {
     "login": "登录",
@@ -398,5 +400,35 @@
     "switchTo": "语言",
     "english": "English",
     "chinese": "中文"
+  },
+  "skillsCost": {
+    "title": "技能开销对比",
+    "subtitle": "对比渐进式披露（仅 L1+L3 索引）与 Eager 模式（注入全部 SKILL.md 正文）在系统提示中的字符与 Token 占用。",
+    "adminRequired": "需要管理员权限",
+    "loadFailed": "加载技能开销数据失败",
+    "generatedAt": "生成时间",
+    "totalSkills": "技能总数",
+    "modelInvocable": "可被模型调用",
+    "eagerBudget": "Eager 字符数",
+    "indexBudget": "Index 字符数",
+    "tokens": "tokens（估算）",
+    "saved": "节省比例",
+    "charsSaved": "字符已节省",
+    "comparison": "整体对比",
+    "comparisonHint": "条形长度按字符总数等比缩放，Eager 始终铺满；Index 越短代表渐进披露收益越大。",
+    "eagerMode": "Eager 模式",
+    "indexMode": "渐进披露",
+    "breakdown": "按技能拆分",
+    "breakdownHint": "默认按 Eager 字符数倒序，可点击表头切换排序。",
+    "excluded": "已禁用模型调用",
+    "active": "活跃",
+    "col": {
+      "name": "技能",
+      "resources": "资源",
+      "eager": "Eager 字符",
+      "index": "Index 字符",
+      "savedPct": "节省比例",
+      "status": "状态"
+    }
   }
 }

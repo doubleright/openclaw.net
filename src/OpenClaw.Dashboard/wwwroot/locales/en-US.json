@@ -38,7 +38,8 @@
     "reject": "Reject",
     "rollback": "Rollback",
     "forbidden": "Access denied",
-    "requires_operator": "Operator role required"
+    "requires_operator": "Operator role required",
+    "sortBy": "Sort by"
   },
   "nav": {
     "overview": "Overview",
@@ -54,7 +55,8 @@
     "sessions": "Sessions",
     "settings": "Settings",
     "channels": "Channels",
-    "whatsapp": "WhatsApp"
+    "whatsapp": "WhatsApp",
+    "skillsCost": "Skills Cost"
   },
   "auth": {
     "login": "Login",
@@ -398,5 +400,35 @@
     "switchTo": "Language",
     "english": "English",
     "chinese": "中文"
+  },
+  "skillsCost": {
+    "title": "Skills Cost Comparison",
+    "subtitle": "Compare progressive disclosure (L1 + L3 index only) against eager mode (every SKILL.md body inlined) in the system prompt budget.",
+    "adminRequired": "Administrator privileges required",
+    "loadFailed": "Failed to load skill cost estimate",
+    "generatedAt": "Generated at",
+    "totalSkills": "Total skills",
+    "modelInvocable": "model-invocable",
+    "eagerBudget": "Eager characters",
+    "indexBudget": "Index characters",
+    "tokens": "tokens (est.)",
+    "saved": "Saved ratio",
+    "charsSaved": "characters saved",
+    "comparison": "Aggregate comparison",
+    "comparisonHint": "Bar length is normalized to the eager total; the shorter the Index bar, the larger the progressive-disclosure gain.",
+    "eagerMode": "Eager mode",
+    "indexMode": "Progressive disclosure",
+    "breakdown": "Per-skill breakdown",
+    "breakdownHint": "Default sort is descending by eager characters; click any column header to re-sort.",
+    "excluded": "model invocation disabled",
+    "active": "Active",
+    "col": {
+      "name": "Skill",
+      "resources": "Resources",
+      "eager": "Eager chars",
+      "index": "Index chars",
+      "savedPct": "Saved %",
+      "status": "Status"
+    }
   }
 }

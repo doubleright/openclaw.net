@@ -74,6 +74,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly FractalMemoryConfig? _fractalMemory;
     private readonly object _skillGate = new();
     private string[] _loadedSkillNames = [];
+    private IReadOnlyList<SkillDefinition> _loadedSkills = [];
     private int _skillPromptLength;
 
     public AgentRuntime(
@@ -193,6 +194,17 @@ public sealed class AgentRuntime : IAgentRuntime
             lock (_skillGate)
             {
                 return _loadedSkillNames;
+            }
+        }
+    }
+
+    public IReadOnlyList<SkillDefinition> LoadedSkills
+    {
+        get
+        {
+            lock (_skillGate)
+            {
+                return _loadedSkills;
             }
         }
     }
@@ -1853,10 +1865,14 @@ public sealed class AgentRuntime : IAgentRuntime
     {
         lock (_skillGate)
         {
-            var skillSection = SkillPromptBuilder.Build(skills);
+            // Progressive disclosure: only the metadata index lives in the system prompt.
+            // The full SKILL.md body for any single skill is fetched on demand via the
+            // `load_skill` tool, which reads from LoadedSkills (this same snapshot).
+            var skillSection = SkillPromptBuilder.BuildIndex(skills, _skillsConfig?.InstructionPrompt);
             var basePrompt = AgentSystemPromptBuilder.BuildBaseSystemPrompt(_requireToolApproval);
             _skillPromptLength = skillSection.Length;
             _systemPrompt = string.IsNullOrEmpty(skillSection) ? basePrompt : basePrompt + "\n" + skillSection;
+            _loadedSkills = skills;
             _loadedSkillNames = skills
                 .Select(skill => skill.Name)
                 .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)

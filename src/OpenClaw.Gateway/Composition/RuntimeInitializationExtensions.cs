@@ -63,10 +63,8 @@ internal static partial class RuntimeInitializationExtensions
         RecordLegacyMafConfigNotice(app, services, startupLogger, startupNoticeSink);
         var providerSmokeRegistry = app.Services.GetRequiredService<ProviderSmokeRegistry>();
 
-        // Register observability gauge for pending tool approvals
         var approvalService = app.Services.GetRequiredService<ToolApprovalService>();
         Telemetry.RegisterApprovalQueueGauge(() => approvalService.PendingCount);
-
         var blockedPluginIds = services.PluginHealth.GetBlockedPluginIds();
         var channelComposition = await BuildChannelCompositionAsync(app, startup, services, loggerFactory);
 
@@ -132,6 +130,12 @@ internal static partial class RuntimeInitializationExtensions
         if (skills.Count > 0)
             skillLogger.LogInformation("{Summary}", SkillPromptBuilder.BuildSummary(skills));
 
+        // Progressive disclosure: closure picks up runtimeForLoadSkill (set below) for hot reload.
+        IAgentRuntime? runtimeForLoadSkill = null;
+        Func<IReadOnlyList<SkillDefinition>> skillsProvider = () => runtimeForLoadSkill?.LoadedSkills ?? skills;
+        if (skills.Count > 0)
+            tools = [.. tools, new LoadSkillTool(skillsProvider), new ReadSkillResourceTool(skillsProvider, config.Skills.MaxResourceReadBytes)];
+
         var hooks = CreateHooks(
             config,
             loggerFactory,
@@ -163,9 +167,13 @@ internal static partial class RuntimeInitializationExtensions
             effectiveApprovalRequiredTools,
             services.ToolSandbox);
 
-        // Wire compact callback so /compact command can trigger LLM-powered compaction
+        // Wire the LoadSkillTool/ReadSkillResourceTool closures to the live runtime so
+        // hot-reloaded skills resolve through runtime.LoadedSkills.
+        runtimeForLoadSkill = agentRuntime;
+
         if (agentRuntime is AgentRuntime concreteRuntime)
         {
+            // Wire compact callback so /compact command can trigger LLM-powered compaction.
             services.CommandProcessor.SetCompactCallback(async (session, ct) =>
             {
                 var countBefore = session.History.Count;

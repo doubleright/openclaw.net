@@ -7,6 +7,7 @@ using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Memory;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
+using OpenClaw.Core.Skills;
 using Xunit;
 
 namespace OpenClaw.Tests;
@@ -198,6 +199,8 @@ public sealed class DelegateToolTests
         public CircuitState CircuitBreakerState => CircuitState.Closed;
 
         public IReadOnlyList<string> LoadedSkillNames => [];
+
+        public IReadOnlyList<SkillDefinition> LoadedSkills => [];
 
         public Task<string> RunAsync(
             Session session,

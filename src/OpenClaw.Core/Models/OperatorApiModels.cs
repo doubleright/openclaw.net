@@ -197,6 +197,55 @@ public sealed class SkillListResponse
     public IReadOnlyList<SkillHealthSnapshot> Items { get; init; } = [];
 }
 
+/// <summary>
+/// Per-skill cost breakdown for the SKILL progressive-disclosure dashboard.
+/// All values are character counts of the prompt fragments emitted by
+/// <see cref="OpenClaw.Core.Skills.SkillPromptBuilder"/>.
+/// </summary>
+public sealed class SkillCostBreakdown
+{
+    public required string Name { get; init; }
+    public string Description { get; init; } = "";
+    /// <summary>Characters contributed to the eager <c>Build</c> output by this skill (entry + body).</summary>
+    public int EagerCharacters { get; init; }
+    /// <summary>Characters contributed to the <c>BuildIndex</c> output by this skill (entry + resource manifest, no body).</summary>
+    public int IndexCharacters { get; init; }
+    /// <summary>Number of L3 resources declared by this skill (references + scripts).</summary>
+    public int ResourceCount { get; init; }
+    /// <summary>Length of the SKILL.md body (instructions). Equals <c>EagerCharacters - IndexCharacters</c> modulo XML overhead.</summary>
+    public int InstructionsLength { get; init; }
+    /// <summary>True when <c>DisableModelInvocation</c> is set — this skill is excluded from both budgets.</summary>
+    public bool ExcludedFromModel { get; init; }
+}
+
+/// <summary>
+/// Aggregate response for <c>GET /admin/skills/cost-estimate</c>:
+/// compares the eager (<see cref="OpenClaw.Core.Skills.SkillPromptBuilder.EstimateCharacterCost"/>)
+/// and progressive-disclosure index (<see cref="OpenClaw.Core.Skills.SkillPromptBuilder.EstimateIndexCharacterCost"/>)
+/// system-prompt sizes for the currently loaded skill set.
+/// </summary>
+public sealed class SkillCostEstimateResponse
+{
+    public int TotalSkills { get; init; }
+    public int ModelInvocableSkills { get; init; }
+    /// <summary>Total characters when injecting every skill's full body up-front (legacy eager mode).</summary>
+    public int EagerCharacters { get; init; }
+    /// <summary>Total characters when injecting only the index + resource manifest (progressive disclosure).</summary>
+    public int IndexCharacters { get; init; }
+    /// <summary>Absolute number of characters saved by switching to progressive disclosure.</summary>
+    public int CharactersSaved { get; init; }
+    /// <summary>Fraction of characters saved, in [0, 1]. Zero when eager cost is also zero.</summary>
+    public double SavedRatio { get; init; }
+    /// <summary>Rough token estimate using a 4-chars-per-token heuristic for the eager budget.</summary>
+    public int EagerTokensEstimate { get; init; }
+    /// <summary>Rough token estimate using a 4-chars-per-token heuristic for the index budget.</summary>
+    public int IndexTokensEstimate { get; init; }
+    /// <summary>Per-skill breakdown, sorted by <see cref="SkillCostBreakdown.EagerCharacters"/> descending.</summary>
+    public IReadOnlyList<SkillCostBreakdown> Items { get; init; } = [];
+    /// <summary>UTC timestamp when the snapshot was computed.</summary>
+    public DateTimeOffset GeneratedAt { get; init; }
+}
+
 public sealed class ChannelAuthStatusResponse
 {
     public ChannelAuthStatusItem[] Items { get; init; } = [];
