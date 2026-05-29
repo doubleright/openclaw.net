@@ -77,9 +77,10 @@ internal static class SkillKitCommands
         }
 
         await output.WriteLineAsync("ID                           Name                                  Category     Version");
-        foreach (var package in packages.OrderBy(static package => package.Manifest.Id, StringComparer.OrdinalIgnoreCase))
+        foreach (var manifest in packages
+            .OrderBy(static package => package.Manifest.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(static package => package.Manifest))
         {
-            var manifest = package.Manifest;
             await output.WriteLineAsync($"{Truncate(manifest.Id, 28),-28} {Truncate(manifest.Name, 37),-37} {Truncate(manifest.Category, 12),-12} {manifest.Version}");
         }
 
@@ -160,6 +161,12 @@ internal static class SkillKitCommands
         }
 
         var inputs = GetOptionValues(args, "--input").Select(path => ResolvePath(currentDirectory, path)).ToArray();
+        if (inputs.Length == 0)
+        {
+            await error.WriteLineAsync("At least one --input <path> is required for skill dry-run planning.");
+            return 2;
+        }
+
         var plan = await service.PlanRunAsync(skillRef, ResolveRoot(currentDirectory, GetOptionValue(args, "--output")), inputs);
         PrintRunPlan(plan, output);
         return plan.InputIssues.Any(static issue => issue.Severity == SkillValidationSeverity.Error) ? 1 : 0;
@@ -224,13 +231,13 @@ internal static class SkillKitCommands
     };
 
     private static string ResolveRoot(string currentDirectory, string? output) =>
-        ResolvePath(currentDirectory, output ?? Path.Combine(".openclaw", "skills"));
+        ResolvePath(currentDirectory, output ?? Path.Join(".openclaw", "skills"));
 
     private static string ResolvePackagesRoot(string currentDirectory, string? output) =>
-        ResolvePath(currentDirectory, output ?? Path.Combine(".openclaw", "packages"));
+        ResolvePath(currentDirectory, output ?? Path.Join(".openclaw", "packages"));
 
     private static string ResolvePath(string currentDirectory, string path) =>
-        Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(currentDirectory, path));
+        Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Join(currentDirectory, path));
 
     private static string? FirstPositional(string[] args)
     {

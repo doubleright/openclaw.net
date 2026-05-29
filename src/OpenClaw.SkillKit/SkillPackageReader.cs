@@ -8,7 +8,7 @@ public sealed class SkillPackageReader
     public async Task<SkillPackage> ReadAsync(string skillRef, string skillsRoot, CancellationToken cancellationToken = default)
     {
         var packageRoot = ResolveSkillPath(skillRef, skillsRoot);
-        var manifestPath = Path.Combine(packageRoot, "skill.yaml");
+        var manifestPath = Path.Join(packageRoot, "skill.yaml");
         if (!File.Exists(manifestPath))
             throw new FileNotFoundException($"Skill manifest not found: {manifestPath}", manifestPath);
 
@@ -16,7 +16,7 @@ public sealed class SkillPackageReader
         var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in SkillTemplateRenderer.RequiredFiles)
         {
-            var path = Path.Combine(packageRoot, file);
+            var path = ResolvePackageFilePath(packageRoot, file);
             if (File.Exists(path))
                 files[file] = await File.ReadAllTextAsync(path, Encoding.UTF8, cancellationToken);
         }
@@ -35,9 +35,9 @@ public sealed class SkillPackageReader
             return [];
 
         var packages = new List<SkillPackage>();
-        foreach (var directory in Directory.EnumerateDirectories(skillsRoot).Order(StringComparer.OrdinalIgnoreCase))
+        foreach (var directory in EnumerateSkillDirectories(skillsRoot))
         {
-            var manifestPath = Path.Combine(directory, "skill.yaml");
+            var manifestPath = Path.Join(directory, "skill.yaml");
             if (!File.Exists(manifestPath))
                 continue;
 
@@ -51,9 +51,30 @@ public sealed class SkillPackageReader
             catch (InvalidDataException)
             {
             }
+            catch (UnauthorizedAccessException)
+            {
+            }
         }
 
         return packages;
+    }
+
+    private static IReadOnlyList<string> EnumerateSkillDirectories(string skillsRoot)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(skillsRoot)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (IOException)
+        {
+            return [];
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return [];
+        }
     }
 
     public static string ResolveSkillPath(string skillRef, string skillsRoot)
@@ -62,9 +83,26 @@ public sealed class SkillPackageReader
             throw new ArgumentException("Skill id or path is required.", nameof(skillRef));
 
         var fullRef = Path.GetFullPath(skillRef);
-        if (Directory.Exists(fullRef) || File.Exists(Path.Combine(fullRef, "skill.yaml")))
+        if (Directory.Exists(fullRef) || File.Exists(Path.Join(fullRef, "skill.yaml")))
             return fullRef;
 
-        return Path.GetFullPath(Path.Combine(skillsRoot, skillRef));
+        if (Path.IsPathRooted(skillRef))
+            return fullRef;
+
+        return Path.GetFullPath(Path.Join(skillsRoot, skillRef));
+    }
+
+    internal static string ResolvePackageFilePath(string packageRoot, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName) || Path.IsPathRooted(fileName))
+            throw new InvalidDataException($"Skill package file name must be relative: {fileName}");
+
+        var fullRoot = Path.GetFullPath(packageRoot);
+        var fullPath = Path.GetFullPath(Path.Join(fullRoot, fileName));
+        var relative = Path.GetRelativePath(fullRoot, fullPath);
+        if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+            throw new InvalidDataException($"Skill package file escapes package root: {fileName}");
+
+        return fullPath;
     }
 }

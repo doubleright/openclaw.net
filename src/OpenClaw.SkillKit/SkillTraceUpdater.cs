@@ -7,8 +7,9 @@ public sealed class SkillTraceUpdater
 {
     public async Task AppendAsync(SkillPackage package, string message, CancellationToken cancellationToken = default)
     {
-        var tracePath = Path.Combine(package.RootPath, "trace.md");
-        var line = $"- {DateTimeOffset.UtcNow:O}: {message}{Environment.NewLine}";
+        var tracePath = SkillPackageReader.ResolvePackageFilePath(package.RootPath, "trace.md");
+        var sanitizedMessage = SanitizeTraceMessage(message);
+        var line = $"- {DateTimeOffset.UtcNow:O}: {sanitizedMessage}{Environment.NewLine}";
         if (!File.Exists(tracePath))
         {
             var renderer = new SkillTemplateRenderer();
@@ -16,5 +17,14 @@ public sealed class SkillTraceUpdater
         }
 
         await File.AppendAllTextAsync(tracePath, line, Encoding.UTF8, cancellationToken);
+    }
+
+    private static string SanitizeTraceMessage(string message)
+    {
+        var builder = new StringBuilder(message.Length);
+        foreach (var ch in message)
+            builder.Append(char.IsControl(ch) ? ' ' : ch);
+
+        return builder.ToString().Trim();
     }
 }

@@ -96,6 +96,43 @@ public sealed class SkillKitTests
     }
 
     [Fact]
+    public async Task ManifestSerialization_PreservesAliasesAndBackslashes()
+    {
+        var manifest = new SkillManifest
+        {
+            Id = "example.backslash_skill",
+            Name = "Backslash Skill",
+            Version = "0.1.0",
+            Category = "test",
+            Aliases = ["example-backslash-skill"],
+            Intent = new SkillIntent { Outcome = "Check path handling." },
+            Inputs = new SkillInputs { Required = [@"docs\notes"] },
+            Outputs = new SkillOutputs { Required = ["summary"] },
+            Tools = new SkillToolPolicy { Allowed = ["file.read"], Forbidden = ["email.send"] },
+            Guardrails = new SkillGuardrails { MustNot = ["Invent facts."] },
+            Validation = new SkillValidationPolicy { Checks = ["Ground claims."] },
+            Workflow = new SkillWorkflow
+            {
+                Steps = [new SkillWorkflowStep { Id = "validate", Name = "Validate", Type = SkillWorkflowStepType.Validation, Description = "Validate output." }]
+            }
+        };
+        var path = Path.Combine(CreateTempRoot(), "skill.yaml");
+        try
+        {
+            await SkillManifestSerializer.WriteAsync(path, manifest);
+            var read = await SkillManifestSerializer.ReadAsync(path);
+
+            Assert.Contains("example-backslash-skill", read.Aliases);
+            Assert.Contains(@"docs\notes", read.Inputs.Required);
+            Assert.Equal(SkillWorkflowStepType.Validation, read.Workflow.Steps[0].Type);
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Validation_PassesValidSkillAndFailsMissingManifest()
     {
         var root = CreateTempRoot();
@@ -207,6 +244,53 @@ public sealed class SkillKitTests
             Assert.Contains("collect_inputs", output, StringComparison.Ordinal);
             Assert.Contains("Dry run complete. No model calls or tool calls were executed.", output, StringComparison.Ordinal);
             Assert.DoesNotContain("tool call executed", output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CliRun_DryRunRequiresInput()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var skillsRoot = Path.Combine(root, "skills");
+            await SkillPackageService.CreateDefault().CreateNewAsync("Community Research Insight Extractor", "research", "research", skillsRoot, force: false);
+
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+            var exitCode = await SkillKitCommands.RunAsync(
+                ["run", "community.research_insight", "--dry-run", "--output", skillsRoot],
+                stdout,
+                stderr,
+                root);
+
+            Assert.Equal(2, exitCode);
+            Assert.Contains("At least one --input", stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TraceUpdater_SanitizesMultilineMessages()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var skillsRoot = Path.Combine(root, "skills");
+            var package = await SkillPackageService.CreateDefault().CreateNewAsync("Donor Proposal Builder", "proposal", "proposal", skillsRoot, force: false);
+
+            await new SkillTraceUpdater().AppendAsync(package, "packaged\n- forged entry");
+
+            var trace = await File.ReadAllTextAsync(Path.Combine(package.RootPath, "trace.md"));
+            Assert.Contains("packaged - forged entry", trace, StringComparison.Ordinal);
+            Assert.DoesNotContain("- forged entry", trace.Replace("packaged - forged entry", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
         }
         finally
         {

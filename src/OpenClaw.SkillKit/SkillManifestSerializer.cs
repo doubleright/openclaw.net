@@ -67,15 +67,11 @@ public static class SkillManifestSerializer
         string listKey = string.Empty;
         StepBuilder? currentStep = null;
 
-        foreach (var rawLine in text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        foreach (var rawLine in text.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n')
+            .Where(static line => !string.IsNullOrWhiteSpace(line) && !line.TrimStart().StartsWith('#')))
         {
-            if (string.IsNullOrWhiteSpace(rawLine))
-                continue;
-
             var trimmed = rawLine.Trim();
-            if (trimmed.StartsWith('#'))
-                continue;
-
             var indent = rawLine.Length - rawLine.TrimStart(' ').Length;
             if (trimmed.EndsWith(':') && !trimmed.StartsWith('-'))
             {
@@ -83,7 +79,7 @@ public static class SkillManifestSerializer
                 if (indent == 0)
                 {
                     section = key;
-                    listKey = string.Empty;
+                    listKey = key;
                     currentStep = null;
                 }
                 else if (section == "workflow" && key == "steps")
@@ -216,10 +212,26 @@ public static class SkillManifestSerializer
         if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
             value = value[1..^1];
 
-        return value
-            .Replace("\\n", "\n", StringComparison.Ordinal)
-            .Replace("\\\"", "\"", StringComparison.Ordinal)
-            .Replace("\\\\", "\\", StringComparison.Ordinal);
+        var builder = new StringBuilder(value.Length);
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '\\' && i + 1 < value.Length)
+            {
+                var next = value[++i];
+                builder.Append(next switch
+                {
+                    'n' => '\n',
+                    '"' => '"',
+                    '\\' => '\\',
+                    _ => next
+                });
+                continue;
+            }
+
+            builder.Append(value[i]);
+        }
+
+        return builder.ToString();
     }
 
     private static string StepTypeToYaml(SkillWorkflowStepType type) => type switch
@@ -232,7 +244,7 @@ public static class SkillManifestSerializer
         _ => "reasoning"
     };
 
-    private static SkillWorkflowStepType ParseStepType(string value) => value switch
+    private static SkillWorkflowStepType ParseStepType(string value) => value.ToLowerInvariant() switch
     {
         "input" => SkillWorkflowStepType.Input,
         "generation" => SkillWorkflowStepType.Generation,

@@ -4,6 +4,7 @@
 
 - ID: community.research_insight
 - Name: Community Research Insight Extractor
+- Version: 0.1.0
 
 ## Generated Files
 

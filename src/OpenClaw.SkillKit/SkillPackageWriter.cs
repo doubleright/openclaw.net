@@ -8,7 +8,8 @@ public sealed class SkillPackageWriter(SkillTemplateRenderer renderer)
 {
     public async Task<string> CreateAsync(SkillManifest manifest, string skillsRoot, bool force, CancellationToken cancellationToken = default)
     {
-        var packageRoot = Path.Combine(skillsRoot, manifest.Id);
+        var skillDirectoryName = ValidateSinglePathSegment(manifest.Id, nameof(manifest.Id));
+        var packageRoot = Path.Join(skillsRoot, skillDirectoryName);
         if (Directory.Exists(packageRoot) && !force)
             throw new IOException($"Skill already exists: {packageRoot}. Use --force to overwrite.");
 
@@ -18,7 +19,7 @@ public sealed class SkillPackageWriter(SkillTemplateRenderer renderer)
         Directory.CreateDirectory(packageRoot);
 
         foreach (var (file, content) in renderer.RenderFiles(manifest))
-            await File.WriteAllTextAsync(Path.Combine(packageRoot, file), content, Encoding.UTF8, cancellationToken);
+            await File.WriteAllTextAsync(SkillPackageReader.ResolvePackageFilePath(packageRoot, file), content, Encoding.UTF8, cancellationToken);
 
         return packageRoot;
     }
@@ -27,7 +28,7 @@ public sealed class SkillPackageWriter(SkillTemplateRenderer renderer)
     {
         foreach (var (file, content) in renderer.RenderFiles(package.Manifest))
         {
-            var target = Path.Combine(package.RootPath, file);
+            var target = SkillPackageReader.ResolvePackageFilePath(package.RootPath, file);
             if (File.Exists(target) && !force)
                 continue;
 
@@ -39,7 +40,8 @@ public sealed class SkillPackageWriter(SkillTemplateRenderer renderer)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(packagesRoot);
-        var zipPath = Path.Combine(packagesRoot, $"{package.Manifest.Id}-{package.Manifest.Version}.zip");
+        var packageFileName = $"{ValidateSinglePathSegment(package.Manifest.Id, nameof(package.Manifest.Id))}-{ValidateSinglePathSegment(package.Manifest.Version, nameof(package.Manifest.Version))}.zip";
+        var zipPath = Path.Join(packagesRoot, packageFileName);
         if (File.Exists(zipPath))
         {
             if (!force)
@@ -50,11 +52,25 @@ public sealed class SkillPackageWriter(SkillTemplateRenderer renderer)
         using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
         foreach (var file in SkillTemplateRenderer.RequiredFiles)
         {
-            var source = Path.Combine(package.RootPath, file);
+            var source = SkillPackageReader.ResolvePackageFilePath(package.RootPath, file);
             if (File.Exists(source))
                 archive.CreateEntryFromFile(source, file, CompressionLevel.SmallestSize);
         }
 
         return Task.FromResult(zipPath);
+    }
+
+    private static string ValidateSinglePathSegment(string value, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException("Value cannot be empty.", parameterName);
+        if (Path.IsPathRooted(value) ||
+            value.Contains(Path.DirectorySeparatorChar) ||
+            value.Contains(Path.AltDirectorySeparatorChar))
+        {
+            throw new ArgumentException($"Value must be a single path segment: {value}", parameterName);
+        }
+
+        return value;
     }
 }
