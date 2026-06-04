@@ -205,6 +205,7 @@ The public documentation site is **[AgentQi.dev](https://agentqi.dev)**. The sou
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | Shortest supported path to a running local instance |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Providers, tools, skills, memory, channels, and day-to-day operation |
 | [docs/RELEASES.md](docs/RELEASES.md) | Desktop downloads, release assets, and signing status |
+| [docs/ARCHITECTURE_BOUNDARIES.md](docs/ARCHITECTURE_BOUNDARIES.md) | Core, gateway, extension, AOT/JIT, and Industrial Pack boundaries |
 | [docs/TOOLS_GUIDE.md](docs/TOOLS_GUIDE.md) | Native tool catalog and configuration |
 | [docs/LOCAL_MODELS.md](docs/LOCAL_MODELS.md) | Embedded local models, frame-based video, and experimental LiteRT-LM adapter notes |
 | [docs/mempalace-memory.md](docs/mempalace-memory.md) | Optional MemPalace.NET memory provider and temporal knowledge graph |
@@ -217,6 +218,8 @@ The public documentation site is **[AgentQi.dev](https://agentqi.dev)**. The sou
 ## Contributing
 
 Contributions welcome — especially security review, NativeAOT trimming improvements, sandboxing ideas, new channel adapters, and performance benchmarks. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Project governance, maintainer roles, sponsorship boundaries, branch protection, and review expectations are documented in [docs/project/governance.md](docs/project/governance.md), [docs/project/maintainers.md](docs/project/maintainers.md), [docs/project/sponsors.md](docs/project/sponsors.md), [docs/project/branch-protection.md](docs/project/branch-protection.md), and [docs/maintainers/review-checklist.md](docs/maintainers/review-checklist.md).
 
 If this project helps your .NET AI work, please star it.
 

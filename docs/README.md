@@ -12,6 +12,7 @@ Use this page as the map. If you are unsure where to go next, the groups below a
 | [QUICKSTART.md](QUICKSTART.md) | You want the shortest supported path to a running local instance. |
 | [GLOSSARY.md](GLOSSARY.md) | A term in another doc is unfamiliar — *gateway*, *runtime*, *skill*, *plugin*, *profile*, *posture*, `aot` / `jit` / `auto`, etc. |
 | [../README.md](../README.md) | High-level overview, feature list, and headline capabilities. |
+| [ARCHITECTURE_BOUNDARIES.md](ARCHITECTURE_BOUNDARIES.md) | Core, gateway, extension, AOT/JIT, and Industrial Pack boundaries. |
 
 ## Using It
 
@@ -85,8 +86,14 @@ Use this page as the map. If you are unsure where to go next, the groups below a
 | Doc | What it covers |
 | --- | --- |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Build, test, and PR expectations for contributors. |
+| [project/governance.md](project/governance.md) | Project governance principles, role boundaries, commercial-use disclosure, vendor neutrality, and Industrial Pack scope. |
+| [project/maintainers.md](project/maintainers.md) | Maintainer role definitions, area maintainer scope, review expectations, and approval boundaries. |
+| [project/sponsors.md](project/sponsors.md) | Sponsorship support, limits, commercial-use guidance, and sponsor listing policy. |
+| [project/branch-protection.md](project/branch-protection.md) | Recommended `main` branch protection, required checks, and CODEOWNERS relationship. |
+| [maintainers/review-checklist.md](maintainers/review-checklist.md) | Maintainer checklist for runtime, gateway, extension, industrial, documentation, security, AOT, and commercial review. |
 | [ai-contributor-guide.md](ai-contributor-guide.md) | Guidance for AI-assisted contribution workflows. |
 | [architecture-startup-refactor.md](architecture-startup-refactor.md) | Current gateway startup layout and composition seams. |
+| [proposals/industrial-pack-preview.md](proposals/industrial-pack-preview.md) | Proposal for a reusable, vendor-neutral Industrial Pack preview. |
 | [ROADMAP.md](ROADMAP.md) | Planned direction and priorities. |
 
 ## Research and Experiments

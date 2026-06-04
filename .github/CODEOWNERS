@@ -1,0 +1,32 @@
+# Default owner for all changes
+* @tellikoroma
+
+# Runtime core
+/src/OpenClaw.Agent/ @tellikoroma
+/src/OpenClaw.Core/ @tellikoroma
+/src/OpenClaw.Gateway/ @tellikoroma
+/src/OpenClaw.PluginKit/ @tellikoroma
+
+# Security-sensitive docs and policy
+/SECURITY.md @tellikoroma
+/docs/project/governance.md @tellikoroma
+/docs/project/maintainers.md @tellikoroma
+/docs/project/sponsors.md @tellikoroma
+/docs/project/branch-protection.md @tellikoroma
+/docs/security/ @tellikoroma
+/docs/governance/ @tellikoroma
+/docs/maintainers/ @tellikoroma
+
+# Build, release, and CI
+/.github/ @tellikoroma
+/Directory.Build.props @tellikoroma
+/Directory.Build.targets @tellikoroma
+/OpenClaw.Net.slnx @tellikoroma
+/docs/RELEASES.md @tellikoroma
+
+# Industrial proposal and community documentation areas
+# Add additional area maintainers here only after they have accepted repo access
+# and the governance/maintainer process has been formalized.
+/docs/proposals/industrial-pack-preview.md @tellikoroma
+/docs/industrial/ @tellikoroma
+/docs/zh-CN/ @tellikoroma

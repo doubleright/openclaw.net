@@ -26,6 +26,7 @@ Use this map when turning the Markdown docs into a documentation website. It kee
 | Guides | Shared Harness State | [SHARED_HARNESS_STATE.md](SHARED_HARNESS_STATE.md) |
 | Guides | Codebase Harness Map | [CODEBASE_HARNESS_MAP.md](CODEBASE_HARNESS_MAP.md) |
 | Reference | Compatibility | [COMPATIBILITY.md](COMPATIBILITY.md) |
+| Reference | Architecture Boundaries | [ARCHITECTURE_BOUNDARIES.md](ARCHITECTURE_BOUNDARIES.md) |
 | Reference | Sessions | [SESSIONS.md](SESSIONS.md) |
 | Reference | Canvas and A2UI | [CANVAS_A2UI.md](CANVAS_A2UI.md) |
 | Reference | Glossary | [GLOSSARY.md](GLOSSARY.md) |
@@ -45,6 +46,12 @@ Use this map when turning the Markdown docs into a documentation website. It kee
 | Operations | Docker Hub | [DOCKERHUB.md](DOCKERHUB.md) |
 | Operations | Optional Sandboxing | [sandboxing.md](sandboxing.md) |
 | Project | Contributing | [CONTRIBUTING.md](../CONTRIBUTING.md) |
+| Project | Governance | [project/governance.md](project/governance.md) |
+| Project | Maintainers | [project/maintainers.md](project/maintainers.md) |
+| Project | Sponsors | [project/sponsors.md](project/sponsors.md) |
+| Project | Branch Protection | [project/branch-protection.md](project/branch-protection.md) |
+| Project | Maintainer Review Checklist | [maintainers/review-checklist.md](maintainers/review-checklist.md) |
+| Project | Industrial Pack Preview Proposal | [proposals/industrial-pack-preview.md](proposals/industrial-pack-preview.md) |
 | Project | Roadmap | [ROADMAP.md](ROADMAP.md) |
 | Project | AI Contributor Guide | [ai-contributor-guide.md](ai-contributor-guide.md) |
 
@@ -84,6 +91,7 @@ Guides
 
 Reference
   Compatibility
+  Architecture Boundaries
   Sessions
   Canvas and A2UI
   Glossary
@@ -109,6 +117,12 @@ Operations
 
 Project
   Contributing
+  Governance
+  Maintainers
+  Sponsors
+  Branch Protection
+  Maintainer Review Checklist
+  Industrial Pack Preview Proposal
   Roadmap
   AI Contributor Guide
 ```

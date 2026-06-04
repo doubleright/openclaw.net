@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing! This guide covers the contributor workflow. For the project shape, repository map, and how the runtime fits together, start with [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). If you are evaluating the project for the first time, read [docs/START_HERE.md](docs/START_HERE.md). For a first local run, follow [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
+For project governance, maintainer roles, sponsorship boundaries, branch protection, and architecture scope, see [docs/project/governance.md](docs/project/governance.md), [docs/project/maintainers.md](docs/project/maintainers.md), [docs/project/sponsors.md](docs/project/sponsors.md), [docs/project/branch-protection.md](docs/project/branch-protection.md), and [docs/ARCHITECTURE_BOUNDARIES.md](docs/ARCHITECTURE_BOUNDARIES.md).
+
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
@@ -64,6 +66,8 @@ PRs need at least one approval before merging. Reviewers check for:
 - **NativeAOT** — does it avoid reflection and dynamic code?
 - **Security** — does it handle untrusted input safely?
 - **Style** — does it follow project conventions?
+
+Maintainers use the scoped review guidance in [docs/maintainers/review-checklist.md](docs/maintainers/review-checklist.md). If a contribution directly supports a company or customer use case, disclose that context in the PR so reviewers can evaluate scope, vendor neutrality, and whether the work belongs in core or an extension.
 
 ## Adding a New Tool or LLM Provider
 

@@ -64,6 +64,9 @@ jobs:
       - name: Test standard targets
         run: dotnet test --no-build -c Release --verbosity normal --logger "trx;LogFileName=results.trx" src/OpenClaw.Tests
 
+      - name: HelloAgent smoke
+        run: dotnet run --project samples/OpenClaw.HelloAgent -c Release --no-build
+
       - name: Restore sandbox-enabled solution
         run: dotnet restore OpenClaw.Net.slnx -p:OpenClawEnableOpenSandbox=true
 
