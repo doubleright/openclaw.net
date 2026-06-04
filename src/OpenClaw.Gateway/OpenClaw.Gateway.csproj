@@ -119,6 +119,10 @@
           Condition="'@(_DotNetBootScript)' != ''" />
   </Target>
 
+  <Target Name="CleanDashboardFilesWhenSkipped" AfterTargets="Build" Condition="'$(OpenClawSkipDashboardBuild)' == 'true'">
+    <RemoveDir Directories="$(OutputPath)wwwroot\dashboard" />
+  </Target>
+
   <!-- Copy Dashboard publish output to Gateway publish dir -->
   <Target Name="CopyDashboardFilesPublish" AfterTargets="Publish">
     <PropertyGroup>

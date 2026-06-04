@@ -73,7 +73,7 @@ jobs:
         run: dotnet restore OpenClaw.Net.slnx
 
       - name: Build solution
-        run: dotnet build OpenClaw.Net.slnx --no-restore -c Release ${{ env.FAST_BUILD_PROPERTIES }}
+        run: dotnet build OpenClaw.Net.slnx --no-restore -c Release
 
       - name: Test standard targets
         run: dotnet test --no-build -c Release --verbosity normal --logger "trx;LogFileName=results.trx" src/OpenClaw.Tests
@@ -85,7 +85,7 @@ jobs:
         run: dotnet restore OpenClaw.Net.slnx -p:OpenClawEnableOpenSandbox=true
 
       - name: Build sandbox-enabled solution
-        run: dotnet build OpenClaw.Net.slnx --no-restore -c Release -p:OpenClawEnableOpenSandbox=true ${{ env.FAST_BUILD_PROPERTIES }}
+        run: dotnet build OpenClaw.Net.slnx --no-restore -c Release -p:OpenClawEnableOpenSandbox=true
 
       - name: Test sandbox-enabled targets
         run: dotnet test --no-build -c Release -p:OpenClawEnableOpenSandbox=true --verbosity normal --logger "trx;LogFileName=results-sandbox.trx" src/OpenClaw.Tests

@@ -27,7 +27,7 @@ dotnet build OpenClaw.Net.slnx -c Release -p:OpenClawSkipDashboardBuild=true
 dotnet build src/OpenClaw.Gateway/OpenClaw.Gateway.csproj -c Release -p:OpenClawSkipDashboardBuild=true
 ```
 
-The CI `build-and-test` job uses this for build/test speed. Do not use it for release publish validation or any check that needs to inspect served Dashboard assets.
+The skip path removes `wwwroot/dashboard` from the Gateway build output so stale Dashboard files are not served accidentally from an old build. Do not use it for release publish validation or any check that needs to inspect served Dashboard assets.
 
 ## Publish Behavior
 
