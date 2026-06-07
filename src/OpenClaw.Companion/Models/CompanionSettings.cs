@@ -13,7 +13,7 @@ public sealed class CompanionSettings
     public bool ApprovalDesktopNotificationsEnabled { get; set; } = true;
     public bool ApprovalDesktopNotificationsOnlyWhenUnfocused { get; set; } = true;
     public bool AutoStartLocalGateway { get; set; } = true;
-    public string SetupProvider { get; set; } = "openai";
+    public string? SetupProvider { get; set; } = "openai";
     public string SetupModel { get; set; } = "gpt-4o";
     public string SetupModelPreset { get; set; } = "";
     public string SetupWorkspacePath { get; set; } = "";

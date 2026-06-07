@@ -9,6 +9,7 @@
         x:Class="OpenClaw.Companion.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
+		WindowState="Maximized"
         Title="OpenClaw.NET Companion">
 
 	<Design.DataContext>
@@ -246,7 +247,7 @@
 									<ComboBox Grid.Column="1"
                                         HorizontalAlignment="Stretch"
                                         IsEditable="True"
-                                        Text="{Binding SetupModel}">
+                                        SelectedItem="{Binding SetupModel}">
 
 										<sys:String>gpt-4o</sys:String>
 										<sys:String>gpt-4o-mini</sys:String>

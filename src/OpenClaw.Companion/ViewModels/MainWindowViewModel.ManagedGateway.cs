@@ -40,7 +40,7 @@ public sealed partial class MainWindowViewModel
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanRunEmbeddedLocalModelCommands))]
-    private string _setupProvider = "openai";
+    private string? _setupProvider = "openai";
 
     [ObservableProperty]
     private string _setupModel = "gpt-4o";
@@ -227,7 +227,7 @@ public sealed partial class MainWindowViewModel
             var setupApiKey = string.IsNullOrWhiteSpace(SetupApiKey) ? null : SetupApiKey;
             LocalGatewayStatus = "Writing local setup...";
             var result = await _managedGateway.RunSetupAsync(new ManagedGatewaySetupRequest(
-                SetupProvider,
+                SetupProvider ?? "openai",
                 SetupModel,
                 setupApiKey,
                 string.IsNullOrWhiteSpace(SetupModelPreset) ? null : SetupModelPreset,
@@ -365,7 +365,7 @@ public sealed partial class MainWindowViewModel
     }
 
     private bool IsEmbeddedSetupProvider()
-        => SetupProvider.Equals("embedded", StringComparison.OrdinalIgnoreCase);
+        => SetupProvider?.Equals("embedded", StringComparison.OrdinalIgnoreCase) == true;
 
     partial void OnAutoStartLocalGatewayChanged(bool value)
     {
@@ -373,18 +373,19 @@ public sealed partial class MainWindowViewModel
             SaveSettings();
     }
 
-    partial void OnSetupProviderChanged(string value)
+    partial void OnSetupProviderChanged(string? value)
     {
-        if (value.Equals("ollama", StringComparison.OrdinalIgnoreCase))
+        if (value?.Equals("ollama", StringComparison.OrdinalIgnoreCase) == true)
         {
-            if (string.IsNullOrWhiteSpace(SetupModel) ||
-                SetupModel.Equals("gpt-4o", StringComparison.OrdinalIgnoreCase) ||
-                SetupModel.Equals("gemma-local-small-q4", StringComparison.OrdinalIgnoreCase))
-                SetupModel = "llama3.2";
-            if (string.IsNullOrWhiteSpace(SetupModelPreset))
-                SetupModelPreset = "ollama-general";
+                if (string.IsNullOrWhiteSpace(SetupModel) ||
+                    SetupModel.Equals("gpt-4o", StringComparison.OrdinalIgnoreCase) ||
+                    SetupModel.Equals("gemma-local-small-q4", StringComparison.OrdinalIgnoreCase))
+                    SetupModel = "llama3.2";
+                if (string.IsNullOrWhiteSpace(SetupModelPreset))
+                    SetupModelPreset = "ollama-general";
+
         }
-        else if (value.Equals("embedded", StringComparison.OrdinalIgnoreCase))
+        else if (value?.Equals("embedded", StringComparison.OrdinalIgnoreCase) == true)
         {
             if (string.IsNullOrWhiteSpace(SetupModel) ||
                 SetupModel.Equals("gpt-4o", StringComparison.OrdinalIgnoreCase) ||

@@ -161,7 +161,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             ApprovalDesktopNotificationsEnabled = ApprovalDesktopNotificationsEnabled,
             ApprovalDesktopNotificationsOnlyWhenUnfocused = ApprovalDesktopNotificationsOnlyWhenUnfocused,
             AutoStartLocalGateway = AutoStartLocalGateway,
-            SetupProvider = SetupProvider,
+            SetupProvider = SetupProvider ?? "openai",
             SetupModel = SetupModel,
             SetupModelPreset = SetupModelPreset,
             SetupWorkspacePath = SetupWorkspacePath,
