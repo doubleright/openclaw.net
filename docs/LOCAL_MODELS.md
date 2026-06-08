@@ -84,6 +84,46 @@ Use provider `embedded` and a package-backed preset:
 
 For source checkouts, `openclaw setup --provider embedded --model-preset embedded-gemma-small-q4 --model gemma-local-small-q4` writes the keyless embedded profile.
 
+## Dynamic Turn Routing
+
+OpenClaw can classify each incoming user turn into `T0` through `T3` and map that turn onto an existing model profile.
+
+Required local assets:
+
+- `Classifier.ModelPath`: LightGBM-exported ONNX classifier
+- `Embeddings.ModelPath`: local embedding ONNX model
+- `Embeddings.TokenizerPath`: tokenizer JSON for the embedding model
+
+Example configuration:
+
+```json
+{
+  "OpenClaw": {
+    "DynamicTurnRouting": {
+      "Enabled": true,
+      "Classifier": {
+        "ModelPath": "models/routing/squilla_classifier.onnx"
+      },
+      "Embeddings": {
+        "ModelPath": "models/routing/minilm/model.onnx",
+        "TokenizerPath": "models/routing/minilm/tokenizer.json",
+        "Dimensions": 384
+      },
+      "Tiers": {
+        "T0": { "ModelProfileId": "local-freeform", "DisableTools": true, "PromptMode": "minimal" },
+        "T1": { "ModelProfileId": "mini-readonly", "AllowedTools": ["read_file"], "PromptMode": "compact" },
+        "T2": { "ModelProfileId": "frontier-tools", "PromptMode": "full" },
+        "T3": { "ModelProfileId": "frontier-deep", "PromptMode": "full" }
+      }
+    }
+  }
+}
+```
+
+If asset loading or ONNX inference fails, the router falls back to `T2` and the request still runs through the standard model-profile pipeline.
+
+This repository does not commit classifier or embedding binaries. Keep those artifacts in your local operator-managed model directory so the source tree stays small, auditable, and license-neutral.
+
 ## Sidecar Contract
 
 The embedded provider expects the sidecar to expose:

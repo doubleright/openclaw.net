@@ -51,6 +51,7 @@ This matrix summarizes the current OpenClaw.NET capability lanes. It complements
 | OpenAI-compatible provider | Optional | Provider-neutral path for compatible endpoints. |
 | Embedded local model sidecar | Experimental | Supervised local model packages, including multimodal frame-based video handling. |
 | Microsoft Agent Framework adapter | Optional | Select with `Runtime.Orchestrator=maf`; native runtime remains the default. |
+| Dynamic turn routing | Experimental | Stable runtime wiring with conservative thresholds; classifier quality is not claimed to match OpenSquilla-equivalent accuracy. |
 | Durable workflow backend | Optional | Delegates long-running runs to supported workflow hosts without making normal turns durable. |
 | Fractal Memory MCP integration | Optional | MCP-first structured memory integration. |
 | Mempalace memory provider | Optional | Optional temporal knowledge graph memory provider. |

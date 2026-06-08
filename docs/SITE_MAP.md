@@ -13,6 +13,7 @@ Use this map when turning the Markdown docs into a documentation website. It kee
 | Guides | User Guide | [USER_GUIDE.md](USER_GUIDE.md) |
 | Guides | Tools Guide | [TOOLS_GUIDE.md](TOOLS_GUIDE.md) |
 | Guides | Embedded Local Models | [LOCAL_MODELS.md](LOCAL_MODELS.md) |
+| Guides | OpenSquilla Dynamic Turn Routing | [opensquilla-dynamic-turn-routing.md](opensquilla-dynamic-turn-routing.md) |
 | Guides | External CLI Connectors | [EXTERNAL_CLI_CONNECTORS.md](EXTERNAL_CLI_CONNECTORS.md) |
 | Guides | Fractal Memory | [FRACTAL_MEMORY.md](FRACTAL_MEMORY.md) |
 | Guides | Model Profiles | [MODEL_PROFILES.md](MODEL_PROFILES.md) |

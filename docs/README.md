@@ -25,6 +25,7 @@ Use this page as the map. If you are unsure where to go next, the groups below a
 | [TOOLS_GUIDE.md](TOOLS_GUIDE.md) | Native tool catalog, behavior, and configuration. |
 | [SKILLKIT.md](SKILLKIT.md) | Local-first `openclaw skill` workflows for defining, validating, critiquing, packaging, and dry-running reusable OpenClaw skills. |
 | [LOCAL_MODELS.md](LOCAL_MODELS.md) | Embedded local model packages, supervised sidecars, frame-based video support, and experimental LiteRT-LM adapter guidance. |
+| [opensquilla-dynamic-turn-routing.md](opensquilla-dynamic-turn-routing.md) | Independent guide to the OpenSquilla-style dynamic turn-routing surface, current implementation status, runtime wiring, and operator expectations. |
 | [EXTERNAL_CLI_CONNECTORS.md](EXTERNAL_CLI_CONNECTORS.md) | Governed external CLI connectors, optional presets, named command allowlists, approvals, redaction, and audit behavior. |
 | [plugins/payment.md](plugins/payment.md) | Native payment tool, virtual cards, machine payments, providers, and safe agent-facing actions. |
 | [cli/payment.md](cli/payment.md) | `openclaw payment ...` gateway-backed CLI commands and safe output contract. |
@@ -58,6 +59,7 @@ Use this page as the map. If you are unsure where to go next, the groups below a
 | --- | --- |
 | [testing/agent-testing-harness.md](testing/agent-testing-harness.md) | Scenario-based agent tests, trace artifacts, explicit oracles, CLI usage, xUnit usage, and future runtime/gateway adapter seams. |
 | [testing/ai-assisted-testing-playbook.md](testing/ai-assisted-testing-playbook.md) | Disciplined AI-assisted testing workflow: scenario matrices, oracle requirements, boundary cases, human review, and trace-to-regression loops. |
+| [testing/routing-evaluation.md](testing/routing-evaluation.md) | Offline dynamic routing baseline comparison, sample schema, and regression gate for `alwaysT2`, `ruleOnly`, and `classifierPlusRules`. |
 | [HARNESS_REGRESSION.md](HARNESS_REGRESSION.md) | `openclaw harness test` for offline regression checks before trusting harness/runtime changes. |
 | [MODEL_PROFILES.md#evaluation-harness](MODEL_PROFILES.md#evaluation-harness) | Existing gateway-backed model/profile evaluation surface exposed by `openclaw eval`. |
 

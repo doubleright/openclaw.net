@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using OpenClaw.Agent.Routing;
 using OpenClaw.Agent.Tools;
 
 namespace OpenClaw.Agent;
@@ -48,6 +49,7 @@ public sealed class NativeAgentRuntimeFactory : IAgentRuntimeFactory
             toolGovernance: context.ToolGovernance,
             planExecuteVerify: context.PlanExecuteVerify,
             contextBudgetPlanner: context.Services.GetService(typeof(OpenClaw.Core.Memory.ContextBudgetPlanner)) as OpenClaw.Core.Memory.ContextBudgetPlanner,
+            turnRoutingPolicy: context.Services.GetService(typeof(ITurnRoutingPolicy)) as ITurnRoutingPolicy,
             isContractTokenBudgetExceeded: context.IsContractTokenBudgetExceeded,
             isContractRuntimeBudgetExceeded: context.IsContractRuntimeBudgetExceeded,
             recordContractTurnUsage: context.RecordContractTurnUsage,

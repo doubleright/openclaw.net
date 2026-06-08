@@ -5,6 +5,7 @@ All notable changes to this project are tracked in this file.
 ## [Unreleased] - 2026-03-04
 
 ### Integration API, MCP, and SDK
+
 - Added a gateway-hosted typed integration API under `/api/integration` for operational reads and inbound message enqueueing.
 - Added typed integration read models for dashboard snapshots, approvals, approval history, providers, plugins, operator audit, session detail, and session timelines.
 - Added a gateway-hosted MCP JSON-RPC facade at `/mcp` over the shared integration/runtime surface.
@@ -14,6 +15,7 @@ All notable changes to this project are tracked in this file.
 - Repointed the operator dashboard read paths to the typed integration API while keeping the existing admin mutation flows intact.
 
 ### Security
+
 - Bound tool-approval decisions to the original requester (`channelId` + `senderId`) for non-loopback/public binds.
 - Kept `POST /tools/approve` as an explicit admin override path.
 - Added WhatsApp official webhook signature validation support (`ValidateSignature`, `WebhookAppSecret`/`WebhookAppSecretRef`).
@@ -30,6 +32,7 @@ All notable changes to this project are tracked in this file.
   - Sanitized user-provided folder names for analyze/cleanup/trash-sender actions.
 
 ### Memory Retention and Hardening
+
 - Added opt-in memory retention configuration at `OpenClaw:Memory:Retention`:
   - `Enabled` (default `false`)
   - `RunOnStartup` (default `true`)
@@ -61,10 +64,12 @@ All notable changes to this project are tracked in this file.
 - Corrected compaction validation semantics: when compaction is enabled, `CompactionThreshold` must be greater than `MaxHistoryTurns`.
 
 ### Usability/Safety Balance
+
 - WebChat token persistence now defaults to session-only storage (`sessionStorage`).
 - Added a `Remember` toggle to opt into persistent token storage (`localStorage`).
 
 ### Tests
+
 - Added `ToolApprovalServiceTests` for requester-bound approvals and admin override behavior.
 - Added `GatewaySecurityHardeningTests` for public-bind hardening checks (WhatsApp and raw refs).
 - Expanded `GatewaySecurityTests` for HMAC signature validation.
@@ -79,6 +84,7 @@ All notable changes to this project are tracked in this file.
 - Added focused gateway/admin endpoint coverage for the typed integration API, MCP facade, route exposure, and the shared `OpenClaw.Client` MCP surface.
 
 ### Documentation
+
 - Updated:
   - `README.md`
   - `QUICKSTART.md`
@@ -86,8 +92,10 @@ All notable changes to this project are tracked in this file.
   - `SECURITY.md`
   - `CHANGELOG.md`
   - `TOOLS_GUIDE.md`
+- Updated dynamic routing docs to state current limitations, experimental maturity, and the need to avoid OpenSquilla-equivalent accuracy claims.
 
 ### Docker
+
 - Fixed Docker runtime env var binding to use `OpenClaw__...` (ASP.NET configuration) for gateway bind/port/memory settings.
 - Docker defaults now disable the JS plugin bridge on non-loopback binds (`OpenClaw__Plugins__Enabled=false`) unless explicitly enabled.
 - Standardized default image name to `openclaw.net` for local builds and compose.

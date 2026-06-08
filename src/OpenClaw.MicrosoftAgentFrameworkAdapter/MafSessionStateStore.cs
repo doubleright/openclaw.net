@@ -33,7 +33,10 @@ public sealed class MafSessionStateStore
         _mafPackageVersion = ResolveMafPackageVersion();
     }
 
-    public async ValueTask<AgentSession> LoadAsync(ChatClientAgent agent, Session session, CancellationToken ct)
+    public ValueTask<AgentSession> LoadAsync(ChatClientAgent agent, Session session, CancellationToken ct)
+        => LoadAsync(agent, session, ComputeHistoryHash(session), ct);
+
+    internal async ValueTask<AgentSession> LoadAsync(ChatClientAgent agent, Session session, string expectedHistoryHash, CancellationToken ct)
     {
         var path = GetSessionPath(session.Id);
         if (!File.Exists(path))
@@ -75,8 +78,7 @@ public sealed class MafSessionStateStore
                 return await agent.CreateSessionAsync(ct);
             }
 
-            var currentHistoryHash = ComputeHistoryHash(session);
-            if (!string.Equals(envelope.HistoryHash, currentHistoryHash, StringComparison.Ordinal))
+            if (!string.Equals(envelope.HistoryHash, expectedHistoryHash, StringComparison.Ordinal))
             {
                 _logger.LogInformation(
                     "Discarding MAF session sidecar for {SessionId}: history hash mismatch.",
@@ -185,12 +187,18 @@ public sealed class MafSessionStateStore
     {
         var historyJson = JsonSerializer.Serialize(session.History, CoreJsonContext.Default.ListChatTurn);
         var modelOverride = session.ModelOverride ?? string.Empty;
+        var modelProfileId = session.ModelProfileId ?? string.Empty;
+        var preferredModelTags = session.PreferredModelTags.Length == 0
+            ? string.Empty
+            : string.Join(",", session.PreferredModelTags
+                .Select(static item => item.Trim().ToLowerInvariant())
+                .OrderBy(static item => item, StringComparer.Ordinal));
         var systemPromptOverride = session.SystemPromptOverride ?? string.Empty;
         var routePresetId = session.RoutePresetId ?? string.Empty;
         var routeAllowedTools = session.RouteAllowedTools.Length == 0
             ? string.Empty
             : string.Join(",", session.RouteAllowedTools.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase));
-        var payload = $"{modelOverride}\n{systemPromptOverride}\n{routePresetId}\n{routeAllowedTools}\n{historyJson}";
+        var payload = $"{modelOverride}\n{modelProfileId}\n{preferredModelTags}\n{systemPromptOverride}\n{routePresetId}\n{routeAllowedTools}\n{historyJson}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
     }
 }

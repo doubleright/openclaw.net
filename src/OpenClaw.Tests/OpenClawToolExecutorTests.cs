@@ -326,6 +326,30 @@ public sealed class OpenClawToolExecutorTests
         Assert.Contains("Configure the required execution backend or sandbox", result.NextStep ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_RouteToolsDisabled_BlocksDirectToolExecution()
+    {
+        var tool = new SandboxCapableEchoTool(ToolSandboxMode.Prefer, "local-result");
+        var executor = CreateExecutor([tool]);
+        var session = CreateSession();
+        session.RouteToolsDisabled = true;
+
+        var result = await executor.ExecuteAsync(
+            tool.Name,
+            """{"value":"hi"}""",
+            callId: null,
+            session,
+            CreateTurnContext(),
+            isStreaming: false,
+            approvalCallback: null,
+            CancellationToken.None);
+
+        Assert.Equal(ToolResultStatuses.Blocked, result.ResultStatus);
+        Assert.Equal(ToolFailureCodes.PresetBlocked, result.FailureCode);
+        Assert.Contains("disabled for this routed turn", result.ResultText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, tool.LocalExecutionCount);
+    }
+
     private static OpenClawToolExecutor CreateExecutor(
         IReadOnlyList<ITool> tools,
         IToolSandbox? toolSandbox = null,

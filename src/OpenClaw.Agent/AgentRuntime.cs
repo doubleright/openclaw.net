@@ -7,6 +7,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Agent.Execution;
+using OpenClaw.Agent.Routing;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Memory;
 using OpenClaw.Core.Models;
@@ -72,6 +73,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly string? _memoryRecallPrefix;
     private readonly ContextBudgetPlanner? _contextBudgetPlanner;
     private readonly FractalMemoryConfig? _fractalMemory;
+    private readonly ITurnRoutingPolicy _turnRoutingPolicy;
     private readonly object _skillGate = new();
     private string[] _loadedSkillNames = [];
     private IReadOnlyList<SkillDefinition> _loadedSkills = [];
@@ -118,7 +120,8 @@ public sealed class AgentRuntime : IAgentRuntime
         ISentinelSubstitutionService? sentinelSubstitution = null,
         IToolGovernanceService? toolGovernance = null,
         IPlanExecuteVerifyOrchestrator? planExecuteVerify = null,
-        ContextBudgetPlanner? contextBudgetPlanner = null)
+        ContextBudgetPlanner? contextBudgetPlanner = null,
+        ITurnRoutingPolicy? turnRoutingPolicy = null)
     {
         _chatClient = chatClient;
         _tools = tools;
@@ -177,6 +180,7 @@ public sealed class AgentRuntime : IAgentRuntime
         _profilesConfig = profilesConfig;
         _contextBudgetPlanner = contextBudgetPlanner;
         _fractalMemory = gatewayConfig?.Memory.Fractal;
+        _turnRoutingPolicy = turnRoutingPolicy ?? NoopTurnRoutingPolicy.Instance;
         _isContractTokenBudgetExceeded = isContractTokenBudgetExceeded;
         _isContractRuntimeBudgetExceeded = isContractRuntimeBudgetExceeded;
         _recordContractTurnUsage = recordContractTurnUsage;
@@ -285,6 +289,8 @@ public sealed class AgentRuntime : IAgentRuntime
                 session.Id,
                 resumeCheckpoint.CheckpointId);
         }
+
+            using var turnRoutingScope = await ApplyTurnRoutingAsync(session, userMessage, resumeCheckpoint is not null, responseSchema, ct);
 
         // Build conversation for LLM
         var messages = BuildMessages(session, exactLatestToolBatch: resumeCheckpoint is not null);
@@ -522,6 +528,8 @@ public sealed class AgentRuntime : IAgentRuntime
                 session.Id,
                 resumeCheckpoint.CheckpointId);
         }
+
+            using var turnRoutingScope = await ApplyTurnRoutingAsync(session, userMessage, resumeCheckpoint is not null, responseSchema: null, ct);
 
         var messages = BuildMessages(session, exactLatestToolBatch: resumeCheckpoint is not null);
         if (resumeCheckpoint is not null)
@@ -1820,6 +1828,101 @@ public sealed class AgentRuntime : IAgentRuntime
             return systemPrompt;
 
         return systemPrompt + "\n\n[Route Instructions]\n" + session.SystemPromptOverride.Trim();
+    }
+
+    private async ValueTask<IDisposable> ApplyTurnRoutingAsync(
+        Session session,
+        string userMessage,
+        bool exactLatestToolBatch,
+        JsonElement? responseSchema,
+        CancellationToken ct)
+    {
+        var baseOptions = new ChatOptions
+        {
+            ModelId = session.ModelOverride ?? _config.Model,
+            MaxOutputTokens = _maxTokens,
+            Temperature = _temperature,
+            Tools = _toolExecutor.GetToolDeclarations(session),
+            ResponseFormat = responseSchema.HasValue
+                ? ChatResponseFormat.ForJsonSchema(responseSchema.Value, "response")
+                : null
+        };
+
+        if (!string.IsNullOrWhiteSpace(session.ReasoningEffort))
+        {
+            baseOptions.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+            baseOptions.AdditionalProperties["reasoning_effort"] = session.ReasoningEffort;
+        }
+
+        var decision = await _turnRoutingPolicy.ResolveAsync(new TurnRoutingRequest
+        {
+            Session = session,
+            Messages = BuildMessages(session, exactLatestToolBatch),
+            UserMessage = userMessage,
+            BaseOptions = baseOptions
+        }, ct);
+
+        var snapshot = new TurnRoutingSnapshot(
+            session.ModelProfileId,
+            session.PreferredModelTags,
+            session.SystemPromptOverride,
+            session.RouteAllowedTools,
+            session.RouteToolsDisabled,
+            session.RouteModelTier,
+            session.RouteReason);
+
+        if (!string.IsNullOrWhiteSpace(decision.ModelProfileId))
+            session.ModelProfileId = decision.ModelProfileId;
+
+        if (decision.PreferredTags.Length > 0)
+            session.PreferredModelTags = decision.PreferredTags;
+        if (decision.DisableTools)
+        {
+            session.RouteToolsDisabled = true;
+            session.RouteAllowedTools = [];
+        }
+        else if (decision.AllowedTools.Length > 0)
+        {
+            session.RouteAllowedTools = decision.AllowedTools;
+        }
+        session.RouteModelTier = decision.Tier;
+        session.RouteReason = decision.Reason;
+        session.SystemPromptOverride = CombineSystemPromptOverride(snapshot.SystemPromptOverride, decision.SystemPromptSuffix);
+
+        return new TurnRoutingRestoreScope(session, snapshot);
+    }
+
+    private static string? CombineSystemPromptOverride(string? original, string? suffix)
+    {
+        if (string.IsNullOrWhiteSpace(suffix))
+            return original;
+
+        if (string.IsNullOrWhiteSpace(original))
+            return suffix.Trim();
+
+        return original.Trim() + "\n" + suffix.Trim();
+    }
+
+    private readonly record struct TurnRoutingSnapshot(
+        string? ModelProfileId,
+        string[] PreferredModelTags,
+        string? SystemPromptOverride,
+        string[] RouteAllowedTools,
+        bool RouteToolsDisabled,
+        string? RouteModelTier,
+        string? RouteReason);
+
+    private sealed class TurnRoutingRestoreScope(Session session, TurnRoutingSnapshot snapshot) : IDisposable
+    {
+        public void Dispose()
+        {
+            session.ModelProfileId = snapshot.ModelProfileId;
+            session.PreferredModelTags = snapshot.PreferredModelTags;
+            session.SystemPromptOverride = snapshot.SystemPromptOverride;
+            session.RouteAllowedTools = snapshot.RouteAllowedTools;
+            session.RouteToolsDisabled = snapshot.RouteToolsDisabled;
+            session.RouteReason = snapshot.RouteReason;
+        }
     }
 
     private static IList<AIContent> BuildTurnContents(string content)

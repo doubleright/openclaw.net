@@ -52,6 +52,15 @@ public sealed class Session
     /// <summary>Optional route-scoped tool allowlist applied in addition to preset filtering.</summary>
     public string[] RouteAllowedTools { get; set; } = [];
 
+    /// <summary>When true, the current route disables all tool exposure and execution.</summary>
+    public bool RouteToolsDisabled { get; set; }
+
+    /// <summary>Optional dynamic routing tier retained across turns for sticky-tier policy decisions.</summary>
+    public string? RouteModelTier { get; set; }
+
+    /// <summary>Optional turn-scoped routing explanation selected by dynamic turn routing.</summary>
+    public string? RouteReason { get; set; }
+
     /// <summary>Reasoning effort level for extended thinking (null/off, low, medium, high). Set via /think command.</summary>
     public string? ReasoningEffort { get; set; }
 

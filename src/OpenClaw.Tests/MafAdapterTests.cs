@@ -4,7 +4,9 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NSubstitute;
 using OpenClaw.Agent;
+using OpenClaw.Agent.Routing;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Memory;
 using OpenClaw.Core.Models;
@@ -148,6 +150,174 @@ public sealed class MafAdapterTests
 
             var mafTools = Assert.IsAssignableFrom<IReadOnlyList<AITool>>(mafToolsField!.GetValue(runtime));
             Assert.Contains(mafTools, tool => tool is AIFunction function && function.Name == "delegate_agent");
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+
+    [Fact]
+    public async Task MafAgentRuntime_RunAsync_FollowUpRestoresSidecarAgainstPriorCompletedHistory()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var logs = new List<string>();
+            var runtime = CreateRuntime(storagePath, new TestLlmExecutionService(), new MafOptions(), logs);
+            var session = CreateSession("maf-runtime-sidecar-runasync");
+
+            await runtime.RunAsync(session, "first turn", CancellationToken.None);
+            await runtime.RunAsync(session, "follow-up turn", CancellationToken.None);
+
+            Assert.Contains(logs, message => message.Contains("Restored MAF session sidecar", StringComparison.Ordinal));
+            Assert.DoesNotContain(logs, message => message.Contains("history hash mismatch", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_RunAsync_RestoresSidecarWhenTransientRouteStateChangesBetweenTurns()
+    {
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.Arg<TurnRoutingRequest>();
+                return new TurnRoutingDecision
+                {
+                    Tier = "T1",
+                    AllowedTools = request.UserMessage.Contains("first", StringComparison.OrdinalIgnoreCase)
+                        ? ["echo_tool"]
+                        : ["shell"],
+                    SystemPromptSuffix = request.UserMessage.Contains("first", StringComparison.OrdinalIgnoreCase)
+                        ? "First turn route suffix."
+                        : "Follow-up route suffix.",
+                    Reason = request.UserMessage.Contains("first", StringComparison.OrdinalIgnoreCase)
+                        ? "first_route"
+                        : "followup_route"
+                };
+            });
+
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var logs = new List<string>();
+            var runtime = CreateRuntime(storagePath, new TestLlmExecutionService(), new MafOptions(), logs, routing);
+            var session = CreateSession("maf-runtime-sidecar-transient-routing");
+
+            await runtime.RunAsync(session, "first turn", CancellationToken.None);
+            await runtime.RunAsync(session, "follow-up turn", CancellationToken.None);
+
+            Assert.Contains(logs, message => message.Contains("Restored MAF session sidecar", StringComparison.Ordinal));
+            Assert.DoesNotContain(logs, message => message.Contains("history hash mismatch", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_RunStreamingAsync_FollowUpRestoresSidecarAgainstPriorCompletedHistory()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-runtime-sidecar-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var logs = new List<string>();
+            var runtime = CreateRuntime(storagePath, new StreamingTestLlmExecutionService(), new MafOptions { EnableStreaming = true }, logs);
+            var session = CreateSession("maf-runtime-sidecar-streaming");
+
+            await foreach (var _ in runtime.RunStreamingAsync(session, "first turn", CancellationToken.None))
+            {
+            }
+
+            await foreach (var _ in runtime.RunStreamingAsync(session, "follow-up turn", CancellationToken.None))
+            {
+            }
+
+            Assert.Contains(logs, message => message.Contains("Restored MAF session sidecar", StringComparison.Ordinal));
+            Assert.DoesNotContain(logs, message => message.Contains("history hash mismatch", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_RunStreamingAsync_EarlyConsumerBreakKeepsTurnRoutingStateUntilProducerStops()
+    {
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T1",
+                AllowedTools = ["echo_tool"],
+                SystemPromptSuffix = "Transient streaming route prompt.",
+                Reason = "streaming_route"
+            });
+
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-early-break-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var executionService = new BlockingStreamingLlmExecutionService();
+            var runtime = CreateRuntime(
+                storagePath,
+                executionService,
+                new MafOptions { EnableStreaming = true },
+                routingPolicy: routing,
+                tools: [new TestTool("echo_tool")]);
+            var session = CreateSession("maf-routing-early-break-streaming");
+            session.RouteAllowedTools = ["shell"];
+            session.SystemPromptOverride = "Original route prompt";
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var enumerator = runtime.RunStreamingAsync(session, "Open README.md", cts.Token).GetAsyncEnumerator();
+            Task? disposeTask = null;
+
+            try
+            {
+                Assert.True(await enumerator.MoveNextAsync());
+                Assert.Equal(AgentStreamEventType.TextDelta, enumerator.Current.Type);
+                Assert.Equal("first", enumerator.Current.Content);
+                await executionService.ProducerBlocked.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+                disposeTask = enumerator.DisposeAsync().AsTask();
+                await executionService.ProducerCancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+                Assert.False(disposeTask.IsCompleted);
+                Assert.Equal(["echo_tool"], session.RouteAllowedTools);
+                Assert.Equal("Original route prompt\nTransient streaming route prompt.", session.SystemPromptOverride);
+                Assert.Equal("T1", session.RouteModelTier);
+                Assert.Equal("streaming_route", session.RouteReason);
+
+                executionService.AllowCancelledProducerToComplete.SetResult();
+                await disposeTask.WaitAsync(TimeSpan.FromSeconds(2));
+
+                Assert.Equal(["shell"], session.RouteAllowedTools);
+                Assert.Equal("Original route prompt", session.SystemPromptOverride);
+                Assert.Equal("T1", session.RouteModelTier);
+                Assert.Null(session.RouteReason);
+            }
+            finally
+            {
+                cts.Cancel();
+                executionService.AllowCancelledProducerToComplete.TrySetResult();
+                if (disposeTask is null)
+                    await enumerator.DisposeAsync();
+            }
         }
         finally
         {
@@ -316,6 +486,390 @@ public sealed class MafAdapterTests
     }
 
     [Fact]
+    public async Task MafAgentRuntime_AppliesTurnRoutingPolicy_AndRestoresSessionRouteState()
+    {
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T1",
+                ModelProfileId = "mini-readonly",
+                AllowedTools = ["echo_tool"],
+                SystemPromptSuffix = "Keep the reply short and skip planning.",
+                Reason = "simple_read_only"
+            });
+
+        var services = new ServiceCollection()
+            .AddSingleton(routing)
+            .BuildServiceProvider();
+        var executionService = new CapturingLlmExecutionService();
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = new MafAgentRuntime(
+                new AgentRuntimeFactoryContext
+                {
+                    Services = services,
+                    Config = new GatewayConfig
+                    {
+                        Memory = new MemoryConfig
+                        {
+                            StoragePath = storagePath
+                        },
+                        Llm = new LlmProviderConfig
+                        {
+                            Provider = "test-maf",
+                            Model = "maf-test-model"
+                        }
+                    },
+                    RuntimeState = new GatewayRuntimeState
+                    {
+                        RequestedMode = "jit",
+                        EffectiveMode = GatewayRuntimeMode.Jit,
+                        DynamicCodeSupported = true
+                    },
+                    ChatClient = new MafTestChatClient(),
+                    Tools = [new TestTool("echo_tool"), new TestTool("shell")],
+                    MemoryStore = new FileMemoryStore(storagePath, 4),
+                    RuntimeMetrics = new RuntimeMetrics(),
+                    ProviderUsage = new ProviderUsageTracker(),
+                    LlmExecutionService = executionService,
+                    Skills = [],
+                    SkillsConfig = new SkillsConfig(),
+                    WorkspacePath = null,
+                    PluginSkillDirs = [],
+                    Logger = NullLogger.Instance,
+                    Hooks = [],
+                    RequireToolApproval = false,
+                    ApprovalRequiredTools = [],
+                    IsContractTokenBudgetExceeded = null,
+                    IsContractRuntimeBudgetExceeded = null,
+                    RecordContractTurnUsage = null,
+                    AppendContractSnapshot = null
+                },
+                new MafOptions(),
+                new MafAgentFactory(Options.Create(new MafOptions()), NullLoggerFactory.Instance, services),
+                new MafSessionStateStore(
+                    new GatewayConfig
+                    {
+                        Memory = new MemoryConfig
+                        {
+                            StoragePath = storagePath
+                        }
+                    },
+                    Options.Create(new MafOptions()),
+                    NullLogger<MafSessionStateStore>.Instance),
+                new MafTelemetryAdapter(),
+                NullLogger<MafAgentRuntime>.Instance);
+            var session = CreateSession("maf-turn-routing");
+            session.RouteAllowedTools = ["shell"];
+            session.SystemPromptOverride = "Original route prompt";
+
+            await runtime.RunAsync(session, "Open README.md", CancellationToken.None);
+
+            Assert.Equal(["echo_tool"], executionService.LastToolNames);
+            await routing.Received(1).ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>());
+            Assert.Equal(["shell"], session.RouteAllowedTools);
+            Assert.Equal("Original route prompt", session.SystemPromptOverride);
+            Assert.Equal("T1", session.RouteModelTier);
+            Assert.Null(session.RouteReason);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_RunAsync_RestoresTurnRoutingState_WhenCreateAgentFailsAfterRouting()
+    {
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T1",
+                AllowedTools = ["echo_tool"],
+                SystemPromptSuffix = "Transient route prompt.",
+                Reason = "setup_failed_after_routing"
+            });
+
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-setup-failure-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(storagePath, new TestLlmExecutionService(), new MafOptions(), routingPolicy: routing, tools: [new TestTool("echo_tool")]);
+            RemoveMafToolMapping(runtime, "echo_tool");
+            var session = CreateSession("maf-routing-create-agent-failure-runasync");
+            session.RouteAllowedTools = ["shell"];
+            session.SystemPromptOverride = "Original route prompt";
+
+            var result = await runtime.RunAsync(session, "Open README.md", CancellationToken.None);
+
+            Assert.Equal("Sorry, I'm having trouble reaching my AI provider right now. Please try again shortly.", result);
+            Assert.Equal(["shell"], session.RouteAllowedTools);
+            Assert.Equal("Original route prompt", session.SystemPromptOverride);
+            Assert.Equal("T1", session.RouteModelTier);
+            Assert.Null(session.RouteReason);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_RunStreamingAsync_RestoresTurnRoutingState_WhenCreateAgentFailsAfterRouting()
+    {
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T1",
+                AllowedTools = ["echo_tool"],
+                SystemPromptSuffix = "Transient route prompt.",
+                Reason = "setup_failed_after_routing"
+            });
+
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-setup-failure-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(storagePath, new StreamingTestLlmExecutionService(), new MafOptions { EnableStreaming = true }, routingPolicy: routing, tools: [new TestTool("echo_tool")]);
+            RemoveMafToolMapping(runtime, "echo_tool");
+            var session = CreateSession("maf-routing-create-agent-failure-streaming");
+            session.RouteAllowedTools = ["shell"];
+            session.SystemPromptOverride = "Original route prompt";
+
+            await Assert.ThrowsAsync<KeyNotFoundException>(async () =>
+            {
+                await foreach (var _ in runtime.RunStreamingAsync(session, "Open README.md", CancellationToken.None))
+                {
+                }
+            });
+
+            Assert.Equal(["shell"], session.RouteAllowedTools);
+            Assert.Equal("Original route prompt", session.SystemPromptOverride);
+            Assert.Equal("T1", session.RouteModelTier);
+            Assert.Null(session.RouteReason);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_DisableToolsRoutingDecision_ExposesNoToolsToLlm()
+    {
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T0",
+                DisableTools = true,
+                Reason = "disable_tools"
+            });
+
+        var executionService = new CapturingLlmExecutionService();
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-disable-tools-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(
+                storagePath,
+                executionService,
+                new MafOptions(),
+                routingPolicy: routing,
+                tools: [new TestTool("echo_tool"), new TestTool("shell")]);
+            var session = CreateSession("maf-disable-tools");
+
+            await runtime.RunAsync(session, "answer directly", CancellationToken.None);
+
+            Assert.Empty(executionService.LastToolNames);
+            Assert.False(session.RouteToolsDisabled);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_DefaultRoutingDecision_DoesNotClearManualRouteStateForActiveCall()
+    {
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision());
+
+        var executionService = new CapturingLlmExecutionService();
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-default-routing-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(
+                storagePath,
+                executionService,
+                new MafOptions(),
+                routingPolicy: routing,
+                tools: [new TestTool("echo_tool"), new TestTool("shell")]);
+            var session = CreateSession("maf-default-routing-manual-state");
+            session.RouteAllowedTools = ["shell"];
+            session.PreferredModelTags = ["manual-tag"];
+
+            await runtime.RunAsync(session, "use existing manual route", CancellationToken.None);
+
+            Assert.Equal(["shell"], executionService.LastToolNames);
+            Assert.Equal(["manual-tag"], executionService.LastPreferredModelTags);
+            Assert.Equal(["shell"], session.RouteAllowedTools);
+            Assert.Equal(["manual-tag"], session.PreferredModelTags);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_RunAsync_PersistsRouteModelTierForNextTurn()
+    {
+        var observedPreviousTiers = new List<string?>();
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.Arg<TurnRoutingRequest>();
+                observedPreviousTiers.Add(request.Session.RouteModelTier);
+                return new TurnRoutingDecision
+                {
+                    Tier = observedPreviousTiers.Count == 1 ? "T3" : "T1",
+                    Reason = observedPreviousTiers.Count == 1 ? "first_route" : "second_route"
+                };
+            });
+
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-sticky-tier-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(storagePath, new TestLlmExecutionService(), new MafOptions(), routingPolicy: routing);
+            var session = CreateSession("maf-sticky-tier");
+
+            await runtime.RunAsync(session, "first", CancellationToken.None);
+            await runtime.RunAsync(session, "second", CancellationToken.None);
+
+            Assert.Equal([null, "T3"], observedPreviousTiers);
+            Assert.Equal("T1", session.RouteModelTier);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_EmptyRoutingAllowlist_DoesNotOverrideManualSessionAllowlist()
+    {
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T1",
+                ModelProfileId = "mini-readonly",
+                AllowedTools = [],
+                SystemPromptSuffix = "Keep the reply short and skip planning.",
+                Reason = "simple_read_only"
+            });
+
+        var services = new ServiceCollection()
+            .AddSingleton(routing)
+            .BuildServiceProvider();
+        var executionService = new CapturingLlmExecutionService();
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-routing-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = new MafAgentRuntime(
+                new AgentRuntimeFactoryContext
+                {
+                    Services = services,
+                    Config = new GatewayConfig
+                    {
+                        Memory = new MemoryConfig
+                        {
+                            StoragePath = storagePath
+                        },
+                        Llm = new LlmProviderConfig
+                        {
+                            Provider = "test-maf",
+                            Model = "maf-test-model"
+                        }
+                    },
+                    RuntimeState = new GatewayRuntimeState
+                    {
+                        RequestedMode = "jit",
+                        EffectiveMode = GatewayRuntimeMode.Jit,
+                        DynamicCodeSupported = true
+                    },
+                    ChatClient = new MafTestChatClient(),
+                    Tools = [new TestTool("echo_tool"), new TestTool("shell")],
+                    MemoryStore = new FileMemoryStore(storagePath, 4),
+                    RuntimeMetrics = new RuntimeMetrics(),
+                    ProviderUsage = new ProviderUsageTracker(),
+                    LlmExecutionService = executionService,
+                    Skills = [],
+                    SkillsConfig = new SkillsConfig(),
+                    WorkspacePath = null,
+                    PluginSkillDirs = [],
+                    Logger = NullLogger.Instance,
+                    Hooks = [],
+                    RequireToolApproval = false,
+                    ApprovalRequiredTools = [],
+                    IsContractTokenBudgetExceeded = null,
+                    IsContractRuntimeBudgetExceeded = null,
+                    RecordContractTurnUsage = null,
+                    AppendContractSnapshot = null
+                },
+                new MafOptions(),
+                new MafAgentFactory(Options.Create(new MafOptions()), NullLoggerFactory.Instance, services),
+                new MafSessionStateStore(
+                    new GatewayConfig
+                    {
+                        Memory = new MemoryConfig
+                        {
+                            StoragePath = storagePath
+                        }
+                    },
+                    Options.Create(new MafOptions()),
+                    NullLogger<MafSessionStateStore>.Instance),
+                new MafTelemetryAdapter(),
+                NullLogger<MafAgentRuntime>.Instance);
+            var session = CreateSession("maf-empty-routing-allowlist");
+            session.RouteAllowedTools = ["shell"];
+            session.SystemPromptOverride = "Original route prompt";
+
+            await runtime.RunAsync(session, "Open README.md", CancellationToken.None);
+
+            Assert.Equal(["shell"], executionService.LastToolNames);
+            await routing.Received(1).ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>());
+            Assert.Equal(["shell"], session.RouteAllowedTools);
+            Assert.Equal("Original route prompt", session.SystemPromptOverride);
+            Assert.Equal("T1", session.RouteModelTier);
+            Assert.Null(session.RouteReason);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task MafSessionStateStore_HistoryHashMismatch_RebuildsFreshSession()
     {
         var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-sidecar-tests", Guid.NewGuid().ToString("N"));
@@ -414,6 +968,35 @@ public sealed class MafAdapterTests
     }
 
     [Fact]
+    public void MafSessionStateStore_HistoryHash_ChangesWhenModelRoutingFieldsChange()
+    {
+        var session = CreateSession("maf-route-hash");
+        var baseline = MafSessionStateStore.ComputeHistoryHash(session);
+
+        session.ModelProfileId = "mini-readonly";
+        var withProfile = MafSessionStateStore.ComputeHistoryHash(session);
+        session.ModelProfileId = null;
+        session.PreferredModelTags = ["local", "fast"];
+        var withTags = MafSessionStateStore.ComputeHistoryHash(session);
+
+        Assert.NotEqual(baseline, withProfile);
+        Assert.NotEqual(baseline, withTags);
+    }
+
+    [Fact]
+    public void MafSessionStateStore_HistoryHash_NormalizesPreferredModelTagOrder()
+    {
+        var session = CreateSession("maf-route-tag-hash");
+        session.PreferredModelTags = ["local", "fast"];
+        var baseline = MafSessionStateStore.ComputeHistoryHash(session);
+
+        session.PreferredModelTags = ["FAST", "local"];
+        var reordered = MafSessionStateStore.ComputeHistoryHash(session);
+
+        Assert.Equal(baseline, reordered);
+    }
+
+    [Fact]
     public void MafSessionStateStore_NormalizeSidecarPath_StripsRootedPath()
     {
         var normalized = MafSessionStateStore.NormalizeSidecarPath(Path.DirectorySeparatorChar + Path.Join("maf", "sessions"));
@@ -466,6 +1049,86 @@ public sealed class MafAdapterTests
         {
             Directory.Delete(storagePath, recursive: true);
         }
+    }
+
+
+    private static MafAgentRuntime CreateRuntime(
+        string storagePath,
+        ILlmExecutionService executionService,
+        MafOptions options,
+        List<string>? sessionStoreLogs = null,
+        ITurnRoutingPolicy? routingPolicy = null,
+        IReadOnlyList<ITool>? tools = null)
+    {
+        var serviceCollection = new ServiceCollection();
+        if (routingPolicy is not null)
+            serviceCollection.AddSingleton(routingPolicy);
+        var services = serviceCollection.BuildServiceProvider();
+        var config = new GatewayConfig
+        {
+            Memory = new MemoryConfig
+            {
+                StoragePath = storagePath
+            },
+            Llm = new LlmProviderConfig
+            {
+                Provider = "test-maf",
+                Model = "maf-test-model"
+            }
+        };
+
+        return new MafAgentRuntime(
+            new AgentRuntimeFactoryContext
+            {
+                Services = services,
+                Config = config,
+                RuntimeState = new GatewayRuntimeState
+                {
+                    RequestedMode = "jit",
+                    EffectiveMode = GatewayRuntimeMode.Jit,
+                    DynamicCodeSupported = true
+                },
+                ChatClient = new MafTestChatClient(),
+                Tools = tools ?? [],
+                MemoryStore = new FileMemoryStore(storagePath, 4),
+                RuntimeMetrics = new RuntimeMetrics(),
+                ProviderUsage = new ProviderUsageTracker(),
+                LlmExecutionService = executionService,
+                Skills = [],
+                SkillsConfig = new SkillsConfig(),
+                WorkspacePath = null,
+                PluginSkillDirs = [],
+                Logger = NullLogger.Instance,
+                Hooks = [],
+                RequireToolApproval = false,
+                ApprovalRequiredTools = [],
+                IsContractTokenBudgetExceeded = null,
+                IsContractRuntimeBudgetExceeded = null,
+                RecordContractTurnUsage = null,
+                AppendContractSnapshot = null
+            },
+            options,
+            new MafAgentFactory(Options.Create(options), NullLoggerFactory.Instance, services),
+            new MafSessionStateStore(
+                config,
+                Options.Create(options),
+                sessionStoreLogs is null
+                    ? NullLogger<MafSessionStateStore>.Instance
+                    : new CapturingLogger<MafSessionStateStore>(sessionStoreLogs)),
+            new MafTelemetryAdapter(),
+            NullLogger<MafAgentRuntime>.Instance);
+    }
+
+    private static void RemoveMafToolMapping(MafAgentRuntime runtime, string toolName)
+    {
+        var field = typeof(MafAgentRuntime).GetField("_mafToolsByName", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+
+        var map = Assert.IsAssignableFrom<IReadOnlyDictionary<string, AITool>>(field!.GetValue(runtime));
+        var replacement = map
+            .Where(pair => !string.Equals(pair.Key, toolName, StringComparison.Ordinal))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        field.SetValue(runtime, replacement);
     }
 
     private static MafSessionStateStore CreateStore(string storagePath)
@@ -566,6 +1229,8 @@ public sealed class MafAdapterTests
     {
         public IReadOnlyList<string> LastToolNames { get; private set; } = [];
 
+        public IReadOnlyList<string> LastPreferredModelTags { get; private set; } = [];
+
         public CircuitState DefaultCircuitState => CircuitState.Closed;
 
         public Task<LlmExecutionResult> GetResponseAsync(
@@ -576,12 +1241,12 @@ public sealed class MafAdapterTests
             LlmExecutionEstimate estimate,
             CancellationToken ct)
         {
-            _ = session;
             _ = messages;
             _ = turnContext;
             _ = estimate;
             _ = ct;
             LastToolNames = options.Tools?.Select(tool => tool.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray() ?? [];
+            LastPreferredModelTags = session.PreferredModelTags;
             return Task.FromResult(new LlmExecutionResult
             {
                 ProviderId = "test-maf",
@@ -610,6 +1275,153 @@ public sealed class MafAdapterTests
                 ModelId = "maf-test-model",
                 Updates = AsyncEnumerable.Empty<ChatResponseUpdate>()
             });
+        }
+    }
+
+
+    private sealed class CapturingLogger<T>(List<string> messages) : Microsoft.Extensions.Logging.ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            _ = logLevel;
+            _ = eventId;
+            _ = exception;
+            messages.Add(formatter(state, exception));
+        }
+    }
+
+    private sealed class BlockingStreamingLlmExecutionService : ILlmExecutionService
+    {
+        public TaskCompletionSource ProducerBlocked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ProducerCancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowCancelledProducerToComplete { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CircuitState DefaultCircuitState => CircuitState.Closed;
+
+        public Task<LlmExecutionResult> GetResponseAsync(
+            Session session,
+            IReadOnlyList<ChatMessage> messages,
+            ChatOptions options,
+            TurnContext turnContext,
+            LlmExecutionEstimate estimate,
+            CancellationToken ct)
+        {
+            _ = session;
+            _ = messages;
+            _ = options;
+            _ = turnContext;
+            _ = estimate;
+            _ = ct;
+            return Task.FromResult(new LlmExecutionResult
+            {
+                ProviderId = "test-maf",
+                ModelId = "maf-test-model",
+                Response = new ChatResponse([new ChatMessage(ChatRole.Assistant, "ok")])
+            });
+        }
+
+        public Task<LlmStreamingExecutionResult> StartStreamingAsync(
+            Session session,
+            IReadOnlyList<ChatMessage> messages,
+            ChatOptions options,
+            TurnContext turnContext,
+            LlmExecutionEstimate estimate,
+            CancellationToken ct)
+        {
+            _ = session;
+            _ = messages;
+            _ = options;
+            _ = turnContext;
+            _ = estimate;
+            _ = ct;
+            return Task.FromResult(new LlmStreamingExecutionResult
+            {
+                ProviderId = "test-maf",
+                ModelId = "maf-test-model",
+                Updates = GetUpdates(ct)
+            });
+        }
+
+        private async IAsyncEnumerable<ChatResponseUpdate> GetUpdates([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "first");
+            ProducerBlocked.SetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                ProducerCancellationObserved.SetResult();
+                await AllowCancelledProducerToComplete.Task;
+                throw;
+            }
+        }
+    }
+
+    private sealed class StreamingTestLlmExecutionService : ILlmExecutionService
+    {
+        public CircuitState DefaultCircuitState => CircuitState.Closed;
+
+        public Task<LlmExecutionResult> GetResponseAsync(
+            Session session,
+            IReadOnlyList<ChatMessage> messages,
+            ChatOptions options,
+            TurnContext turnContext,
+            LlmExecutionEstimate estimate,
+            CancellationToken ct)
+        {
+            _ = session;
+            _ = messages;
+            _ = options;
+            _ = turnContext;
+            _ = estimate;
+            _ = ct;
+            return Task.FromResult(new LlmExecutionResult
+            {
+                ProviderId = "test-maf",
+                ModelId = "maf-test-model",
+                Response = new ChatResponse([new ChatMessage(ChatRole.Assistant, "ok")])
+            });
+        }
+
+        public Task<LlmStreamingExecutionResult> StartStreamingAsync(
+            Session session,
+            IReadOnlyList<ChatMessage> messages,
+            ChatOptions options,
+            TurnContext turnContext,
+            LlmExecutionEstimate estimate,
+            CancellationToken ct)
+        {
+            _ = session;
+            _ = messages;
+            _ = options;
+            _ = turnContext;
+            _ = estimate;
+            _ = ct;
+            return Task.FromResult(new LlmStreamingExecutionResult
+            {
+                ProviderId = "test-maf",
+                ModelId = "maf-test-model",
+                Updates = GetUpdates()
+            });
+        }
+
+        private static async IAsyncEnumerable<ChatResponseUpdate> GetUpdates()
+        {
+            await Task.CompletedTask;
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok");
         }
     }
 

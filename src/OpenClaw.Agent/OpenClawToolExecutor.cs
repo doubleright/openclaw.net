@@ -101,6 +101,9 @@ public sealed class OpenClawToolExecutor
 
     public IList<AITool> GetToolDeclarations(Session session)
     {
+        if (session.RouteToolsDisabled)
+            return [];
+
         var preset = _toolPresetResolver?.Resolve(session, _toolsByName.Keys);
         return _toolDeclarations
             .Where(item => IsToolAllowedForSession(session, item.Name, preset))
@@ -154,6 +157,21 @@ public sealed class OpenClawToolExecutor
                 failureCode: ToolFailureCodes.ToolFailed,
                 failureMessage: "Unknown tool.",
                 nextStep: "Use one of the tools declared for this session.");
+        }
+
+        if (session.RouteToolsDisabled)
+        {
+            var disabledMessage = $"Tool '{tool.Name}' is disabled for this routed turn.";
+            _logger?.LogInformation("[{CorrelationId}] {Message}", turnCtx.CorrelationId, disabledMessage);
+            return CreateImmediateResult(
+                toolName,
+                persistedArgsJson,
+                disabledMessage,
+                callId: callId,
+                resultStatus: ToolResultStatuses.Blocked,
+                failureCode: ToolFailureCodes.PresetBlocked,
+                failureMessage: disabledMessage,
+                nextStep: "Continue without tools for this routed turn.");
         }
 
         var preset = _toolPresetResolver?.Resolve(session, _toolsByName.Keys);
