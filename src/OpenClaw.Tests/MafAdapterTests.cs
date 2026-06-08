@@ -13,6 +13,7 @@ using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
 using OpenClaw.Core.Skills;
 using OpenClaw.MicrosoftAgentFrameworkAdapter;
+using OpenClaw.Routing.Onnx;
 using Xunit;
 
 namespace OpenClaw.Tests;
@@ -575,6 +576,58 @@ public sealed class MafAdapterTests
             Assert.Equal("Original route prompt", session.SystemPromptOverride);
             Assert.Equal("T1", session.RouteModelTier);
             Assert.Null(session.RouteReason);
+        }
+        finally
+        {
+            Directory.Delete(storagePath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MafAgentRuntime_OnnxPolicyWithMissingAssets_FallsBackToT2_AndKeepsServiceAvailable()
+    {
+        var routing = new OnnxTurnRoutingPolicy(
+            new DynamicTurnRoutingConfig
+            {
+                Enabled = true,
+                Assets = new DynamicTurnRoutingAssetsConfig
+                {
+                    ClassifierModelPath = "missing-classifier.onnx",
+                    EmbeddingModelPath = "missing-embedding.onnx",
+                    TokenizerPath = "missing-tokenizer.json"
+                },
+                Policy = new DynamicTurnRoutingPolicyConfig
+                {
+                    Tiers = new DynamicTurnRoutingTierMap
+                    {
+                        T0 = new DynamicTurnRoutingTierTarget { ModelProfileId = "local-freeform", DisableTools = true },
+                        T1 = new DynamicTurnRoutingTierTarget { ModelProfileId = "mini-readonly", AllowedTools = ["echo_tool"] },
+                        T2 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-tools" },
+                        T3 = new DynamicTurnRoutingTierTarget { ModelProfileId = "frontier-deep" }
+                    }
+                }
+            },
+            NullLogger<OnnxTurnRoutingPolicy>.Instance);
+
+        var executionService = new CapturingLlmExecutionService();
+        var storagePath = Path.Combine(Path.GetTempPath(), "openclaw-maf-onnx-fallback-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(storagePath);
+
+        try
+        {
+            var runtime = CreateRuntime(
+                storagePath,
+                executionService,
+                new MafOptions(),
+                routingPolicy: routing,
+                tools: [new TestTool("echo_tool")]);
+            var session = CreateSession("maf-onnx-fallback");
+
+            var result = await runtime.RunAsync(session, "route this turn", CancellationToken.None);
+
+            Assert.Equal("ok", result);
+            Assert.Equal("T2", session.RouteModelTier);
+            Assert.Equal(["echo_tool"], executionService.LastToolNames);
         }
         finally
         {

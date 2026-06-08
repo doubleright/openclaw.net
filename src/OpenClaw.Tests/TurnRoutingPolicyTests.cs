@@ -36,6 +36,40 @@ public sealed class TurnRoutingPolicyTests
     }
 
     [Fact]
+    public async Task ResolveAsync_WithCompatBundleAssets_DoesNotReturnClassifierUnavailable()
+    {
+        var bundlePath = ResolveRepoBundlePath();
+        var policy = new OnnxTurnRoutingPolicy(
+            new DynamicTurnRoutingConfig
+            {
+                Enabled = true,
+                Assets = new DynamicTurnRoutingAssetsConfig
+                {
+                    ClassifierModelPath = Path.Combine(bundlePath, "classifier.onnx"),
+                    EmbeddingModelPath = Path.Combine(bundlePath, "embeddings.onnx"),
+                    TokenizerPath = Path.Combine(bundlePath, "tokenizer.json"),
+                    RuntimeConfigPath = Path.Combine(bundlePath, "runtime-config.json"),
+                    Dimensions = 512
+                },
+                Policy = new DynamicTurnRoutingPolicyConfig
+                {
+                    Tiers = BuildTierMap()
+                }
+            },
+            NullLogger<OnnxTurnRoutingPolicy>.Instance);
+
+        var decision = await policy.ResolveAsync(BuildRequest("Read README and summarize the key modules."), CancellationToken.None);
+
+        Assert.True(
+            string.Equals(decision.Tier, "T0", StringComparison.Ordinal)
+            || string.Equals(decision.Tier, "T1", StringComparison.Ordinal)
+            || string.Equals(decision.Tier, "T2", StringComparison.Ordinal)
+            || string.Equals(decision.Tier, "T3", StringComparison.Ordinal),
+            $"Unexpected tier: {decision.Tier}");
+        Assert.NotEqual("classifier_unavailable", decision.Reason);
+    }
+
+    [Fact]
     public async Task ResolveAsync_T0DisableTools_ProducesExplicitDisableToolsDecision()
     {
         var policy = new OnnxTurnRoutingPolicy(
@@ -381,6 +415,27 @@ public sealed class TurnRoutingPolicyTests
             },
             Policy = effectivePolicy
         };
+    }
+
+    private static string ResolveRepoBundlePath()
+    {
+        const string relativePath = "models/routing/opensquilla-v4-compat";
+
+        var fromCurrentDirectory = Path.GetFullPath(relativePath, Directory.GetCurrentDirectory());
+        if (Directory.Exists(fromCurrentDirectory))
+            return fromCurrentDirectory;
+
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (Directory.Exists(candidate))
+                return candidate;
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException($"Could not locate compat bundle directory: {relativePath}");
     }
 
     private static ResolvedDynamicTurnRoutingConfig BuildResolvedRoutingConfig()

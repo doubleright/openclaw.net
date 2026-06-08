@@ -105,10 +105,7 @@ Preferred modern shape:
   "OpenClaw": {
     "DynamicTurnRouting": {
       "Enabled": true,
-      "BundlePath": "models/routing/opensquilla-v4",
-      "Assets": {
-        "ClassifierModelPath": "models/routing/override/classifier.onnx"
-      },
+      "BundlePath": "models/routing/opensquilla-v4-compat",
       "Policy": {
         "EnableStickyTier": true,
         "EnableMarginUpgrade": true,
@@ -240,12 +237,71 @@ Goal: reuse OpenClaw runtime wiring by exporting OpenSquilla assets into OpenCla
 
 This is the fastest path with minimal runtime changes.
 
+### Stage A file responsibilities in the compat bundle
+
+For operator troubleshooting, the three key JSON files under `models/routing/opensquilla-v4-compat` have distinct runtime responsibilities:
+
+- `manifest.json`
+  - Purpose: asset index entry for the bundle. It typically provides `classifierModelPath`, `embeddingModelPath`, `tokenizerPath`, and `runtimeConfigPath`.
+  - Runtime behavior: Gateway reads this first and resolves relative paths; if values are missing, it falls back to default bundle filenames such as `classifier.onnx`, `embeddings.onnx`, `tokenizer.json`, and `runtime-config.json`.
+  - Failure signal: bad or missing paths increase `classifier_unavailable` risk and often show up as repeated fallback to `T2`.
+
+- `tokenizer.json`
+  - Purpose: tokenizer config used before local embedding inference. `LocalOnnxEmbeddingGenerator` uses it to encode turn text into model inputs.
+  - Runtime behavior: if the file is missing or incompatible with the active tokenizer loader, ONNX routing degrades to fallback (`T2`) with a machine-readable reason.
+  - Operational guidance: prefer a tokenizer format known to be compatible with the current loader; if using WordPiece variants, validate on your target bundle first.
+
+- `runtime-config.json`
+  - Purpose: runtime metadata, most importantly embedding dimension (`dimensions` / `embeddingDimensions` / `embeddingSize`).
+  - Runtime behavior: Gateway reads embedding dimensions from this file first and writes them into resolved routing assets; if unavailable, it falls back to `manifest.json`, then to default `384`.
+  - Failure signal: dimension mismatch vs real embedding output can degrade feature assembly quality and routing outcomes.
+
+Quick troubleshooting checklist (recommended order):
+
+1. If `classifier_unavailable` persists with repeated fallback to `T2`, verify paths in `manifest.json` first (existence + readability)
+2. If startup is fine but inference fallback is frequent, validate `tokenizer.json` compatibility with the active tokenizer loader
+3. If routing quality drifts or feature behavior looks unstable, verify `runtime-config.json` dimensions against real embedding output
+4. If all three look correct but failures continue, compare `classifier.onnx` input shape against assembled feature vector dimensions
+
+5-minute minimal self-check commands (PowerShell):
+
+```powershell
+$bundle = "models/routing/opensquilla-v4-compat"
+
+# 1) File presence
+Get-Item "$bundle/manifest.json", "$bundle/tokenizer.json", "$bundle/runtime-config.json" |
+  Select-Object FullName, Length, LastWriteTime
+
+# 2) JSON parse check
+Get-Content "$bundle/manifest.json" -Raw | ConvertFrom-Json | Out-Null
+Get-Content "$bundle/tokenizer.json" -Raw | ConvertFrom-Json | Out-Null
+Get-Content "$bundle/runtime-config.json" -Raw | ConvertFrom-Json | Out-Null
+
+# 3) Resolve runtime-config dimension field (any one of these keys)
+$rc = Get-Content "$bundle/runtime-config.json" -Raw | ConvertFrom-Json
+$dims = $rc.embeddingDimensions
+if (-not $dims) { $dims = $rc.dimensions }
+if (-not $dims) { $dims = $rc.embeddingSize }
+"resolved embedding dims = $dims"
+```
+
+Checksum consistency note:
+
+- If you modify any bundle JSON (especially `runtime-config.json`), update the corresponding entry in `manifest.json` -> `checksums`; otherwise verification tooling may report a stale or mismatched bundle.
+- Quick SHA256 command:
+
+```powershell
+(Get-FileHash "models/routing/opensquilla-v4-compat/runtime-config.json" -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
 ### Stage A.1: Offline sample validation notes
 
 To preserve evidence for the “Stage A first, make it usable” milestone, keep both 10-sample snapshots for later comparison:
 
 - [balanced 10-sample report](../artifacts/testing/phase-a-offline-validation-10sample-report.json): 5 simple + 5 complex samples, gold / predicted are both `T0:5` and `T2:5`, fallback is 0
 - [T1-inclusive 10-sample report](../artifacts/testing/phase-a-offline-validation-10sample-report-t1.json): 3 `T0`, 3 `T1`, 2 `T2`, and 2 `T3` samples, gold / predicted match exactly, fallback is 0
+
+Both reports now include a `costDistribution` section with unit-cost proxy totals (`T0=1`, `T1=2`, `T2=4`, `T3=8`) for offline comparison.
 
 Note: both reports are based on the code-level heuristic routing rule. They are not measurements of actual ONNX fallback execution in this session, so fallback should be read as “not triggered,” not “ONNX fallback was verified.”
 
@@ -259,6 +315,34 @@ Goal: preserve OpenSquilla v4.2 multi-head semantics as-is.
 4. Keep `OpenClaw.Core` and `OpenClaw.Agent` interface-only; composition still decided by gateway
 
 This path is more expensive but yields higher behavioral parity.
+
+### Stage B launch gate table (milestone-ready)
+
+| Dimension | Metric | Go threshold | Observation window | If not met | Hard rollback trigger |
+|---|---|---|---|---|---|
+| Availability | Total fallback rate | <= 0.5% | 14 consecutive days (10% production canary) | Extend canary by 7 days and inspect bundle/model load path | Any 30-minute window > 2.0%: rollback to Stage A |
+| Availability | classifier_unavailable | <= 0.1% | 14 consecutive days | Validate bundle naming, paths, and asset completeness first | Any 30-minute window > 0.5%: rollback |
+| Stability | classifier_runtime_error | <= 0.2% | 14 consecutive days | Investigate ONNX inference, shape, and tokenizer compatibility | Any 15-minute window > 1.0%: rollback |
+| Quality | Labeled-set Macro-F1 | >= 0.90 (N >= 500) | Weekly rolling evaluation for 2 weeks | Do not scale to full traffic; continue threshold/tier-map tuning | 2 consecutive weekly runs < 0.88: rollback |
+| Quality | High-cost-tier recall (T2/T3 recall) | >= 0.92 | Weekly rolling evaluation for 2 weeks | Keep only low traffic canary; no scale-out | 2 consecutive weekly runs < 0.90: rollback |
+| Distribution | Tier drift vs Stage A baseline | Absolute drift per tier <= 5pp, T3 drift <= +2pp | 14 consecutive days | Freeze scale-out and analyze prompt/workload drift | Any 24-hour window with T3 drift > +5pp and no quality gain: rollback |
+| Cost | Cost per 1k turns (unit-cost proxy) | <= +8% vs Stage A | 14 consecutive days | Rate-limit and retune up/down-tier thresholds | Any 24-hour window > +15%: rollback |
+| Performance | Added routing latency (p95) | <= +80ms vs Stage A | 14 consecutive days | Optimize model loading and cache behavior | > +150ms for 6 consecutive hours: rollback |
+| Consistency | Native/MAF decision parity | >= 99.5% (same input, same config) | Daily reconciliation for 14 days | Block scale-out and close parity gaps first | Any day < 99.0%: rollback |
+| Ops risk | Sev1/Sev2 routing incidents | Sev1 = 0, Sev2 <= 1/week | 14 consecutive days | Stop scale-out and run incident review | Any Sev1: immediate rollback |
+
+Stage B rollout decision rules:
+
+1. Scale from 10% to 50% only when all Go thresholds are met and no hard rollback trigger fires.
+2. Observe 50% traffic for another 7 days; request full rollout only if all thresholds still hold.
+3. If any hard rollback trigger fires, switch back to Stage A immediately and freeze Stage B changes for at least 72 hours before re-review.
+
+Stage B rollback runbook (short form):
+
+1. Config rollback: switch routing strategy back to Stage A compatibility path (keep current BundlePath and tier mapping).
+2. Traffic rollback: reduce Stage B traffic to 0% within 5 minutes.
+3. Evidence capture: retain 24-hour before/after snapshots for fallback, tier distribution, cost, latency, and native/MAF parity.
+4. Re-entry gate: do not re-enter 10% canary until root cause is identified and validated.
 
 ## Current Integration Risks
 

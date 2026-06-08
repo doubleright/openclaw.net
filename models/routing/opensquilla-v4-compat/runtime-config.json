@@ -12,8 +12,8 @@
   },
   "notes": {
     "tokenizerFamily": "WordPiece",
-    "sourceModelDir": "E:\\GitHub\\opensquilla\\src\\opensquilla\\squilla_router\\models\\v4.2_phase3_inference",
-    "sourceRuntimeConfig": "E:\\GitHub\\opensquilla\\src\\opensquilla\\squilla_router\\models\\v4.2_phase3_inference\\inference_manifest.json",
+    "sourceModelDir": "opensquilla/squilla_router/models/v4.2_phase3_inference",
+    "sourceRuntimeConfig": "opensquilla/squilla_router/models/v4.2_phase3_inference/inference_manifest.json",
     "warning": "WordPiece tokenizer may require OpenClaw tokenizer loader extension"
   },
   "inspect": {
