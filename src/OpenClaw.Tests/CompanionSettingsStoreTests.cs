@@ -1,3 +1,4 @@
+using System.Text.Json;
 using OpenClaw.Companion.Models;
 using OpenClaw.Companion.Services;
 using OpenClaw.Companion.ViewModels;
@@ -192,7 +193,8 @@ public sealed class CompanionSettingsStoreTests
 
             viewModel.SetupProvider = setupProvider;
 
-            Assert.Equal("openai", store.Load().SetupProvider);
+            using var doc = JsonDocument.Parse(File.ReadAllText(store.SettingsPath));
+            Assert.Equal("openai", doc.RootElement.GetProperty("setupProvider").GetString());
 
             var reloaded = new MainWindowViewModel(store, new GatewayWebSocketClient());
             Assert.Equal("openai", reloaded.SetupProvider);

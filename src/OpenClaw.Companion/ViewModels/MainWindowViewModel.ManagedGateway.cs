@@ -421,13 +421,13 @@ public sealed partial class MainWindowViewModel
     {
         if (value is null)
         {
-            if (string.IsNullOrWhiteSpace(SetupModel) ||
-                SetupModel.Equals("llama3.2", StringComparison.OrdinalIgnoreCase) ||
-                SetupModel.Equals("gemma-local-small-q4", StringComparison.OrdinalIgnoreCase))
-            {
-                SetupModel = "gpt-4o";
-                SetupModelPreset = "";
-            }
+            if (!_isLoadingSettings)
+                SaveSettings();
+
+            OnPropertyChanged(nameof(SetupProviderSummary));
+            OnPropertyChanged(nameof(EmbeddedLocalModelDisabledReason));
+            OnPropertyChanged(nameof(HasEmbeddedLocalModelDisabledReason));
+            return;
         }
         else if (value.Equals("ollama", StringComparison.OrdinalIgnoreCase))
         {
