@@ -112,7 +112,7 @@ public sealed class OpenSquillaBundleLoaderTests
 
     private static string CreateTempBundleDirectory()
     {
-        var bundlePath = Path.Combine(Path.GetTempPath(), "openclaw-bundle-tests", Guid.NewGuid().ToString("N"));
+        var bundlePath = Path.Join(Path.GetTempPath(), "openclaw-bundle-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(bundlePath);
         File.WriteAllText(Path.Join(bundlePath, "classifier.onnx"), string.Empty);
         File.WriteAllText(Path.Join(bundlePath, "embeddings.onnx"), string.Empty);

@@ -57,7 +57,7 @@ public sealed class RoutingCommandsTests
     [Fact]
     public async Task RoutingCommands_DiagnosticsOn_PersistsConfigToggle()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
+        var path = Path.Join(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
         try
         {
             var config = new GatewayConfig();
@@ -82,7 +82,7 @@ public sealed class RoutingCommandsTests
     [Fact]
     public async Task RoutingCommands_ConfigureProviders_UpdatesTierTargetFields()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
+        var path = Path.Join(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
         try
         {
             var config = new GatewayConfig();
@@ -126,7 +126,7 @@ public sealed class RoutingCommandsTests
     [Fact]
     public async Task RoutingCommands_ConfigureRouter_Disabled_TurnsRoutingOff()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
+        var path = Path.Join(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
         try
         {
             var config = new GatewayConfig
@@ -157,7 +157,7 @@ public sealed class RoutingCommandsTests
     [Fact]
     public async Task RoutingCommands_ConfigureRouter_OpenRouterMix_AddsPreferredTags()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
+        var path = Path.Join(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
         try
         {
             var config = new GatewayConfig();
@@ -186,7 +186,7 @@ public sealed class RoutingCommandsTests
     [Fact]
     public async Task RoutingCommands_Onboard_DefaultsToRecommendedAndEnablesRouting()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
+        var path = Path.Join(Path.GetTempPath(), $"openclaw-routing-{Guid.NewGuid():N}.json");
         try
         {
             var config = new GatewayConfig

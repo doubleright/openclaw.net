@@ -527,7 +527,7 @@ public sealed class TurnRoutingPolicyTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            var candidate = Path.Combine(directory.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            var candidate = Path.GetFullPath(relativePath, directory.FullName);
             if (Directory.Exists(candidate))
                 return candidate;
 

@@ -345,7 +345,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         var turnRoutingScopeDisposed = false;
 
         Task? producer = null;
-        CancellationTokenSource? producerCts = null;
+        using var producerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         try
         {
@@ -369,7 +369,6 @@ public sealed class MafAgentRuntime : IAgentRuntime
             var messages = BuildMessages(session);
             await TryInjectRecallAsync(messages, userMessage, ct);
 
-            producerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             producer = ProduceStreamingRunAsync(
                 session,
                 messages,
@@ -390,17 +389,17 @@ public sealed class MafAgentRuntime : IAgentRuntime
         {
             if (producer is not null && !producer.IsCompleted)
             {
-                producerCts?.Cancel();
+                producerCts.Cancel();
                 try
                 {
                     await producer;
                 }
-                catch (OperationCanceledException) when (producerCts?.IsCancellationRequested == true)
+                catch (OperationCanceledException ex) when (producerCts.IsCancellationRequested)
                 {
+                    _logger?.LogDebug(ex, "Streaming producer canceled during iterator shutdown.");
                 }
             }
 
-            producerCts?.Dispose();
             DisposeTurnRoutingScope();
         }
 

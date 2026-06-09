@@ -182,7 +182,7 @@ public sealed class TurnRoutingQualityBaselineTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            var candidate = Path.Combine(directory.FullName, DefaultTrackedDatasetRelativePath);
+            var candidate = Path.GetFullPath(DefaultTrackedDatasetRelativePath, directory.FullName);
             if (File.Exists(candidate))
             {
                 path = candidate;
