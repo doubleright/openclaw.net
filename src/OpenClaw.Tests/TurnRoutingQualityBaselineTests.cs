@@ -775,7 +775,8 @@ public sealed class TurnRoutingQualityBaselineTests
 
             var precision = tp / (double)Math.Max(1, tp + fp);
             var recall = tp / (double)Math.Max(1, tp + fn);
-            var f1 = (precision + recall) == 0d ? 0d : 2d * precision * recall / (precision + recall);
+            var denominator = precision + recall;
+            var f1 = denominator <= double.Epsilon ? 0d : 2d * precision * recall / denominator;
 
             result.Add(new
             {
