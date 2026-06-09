@@ -81,12 +81,9 @@ internal sealed class OpenSquillaBundleLoader : IOpenSquillaBundleLoader
         }
         else if (element.ValueKind == JsonValueKind.Array)
         {
-            foreach (var item in element.EnumerateArray())
-            {
-                var nested = TryFindString(item, propertyNames);
-                if (!string.IsNullOrWhiteSpace(nested))
-                    return nested;
-            }
+            return element.EnumerateArray()
+                .Select(item => TryFindString(item, propertyNames))
+                .FirstOrDefault(static nested => !string.IsNullOrWhiteSpace(nested));
         }
 
         return null;
