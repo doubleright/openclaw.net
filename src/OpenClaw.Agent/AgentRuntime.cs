@@ -374,7 +374,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 return ex.Message;
             }
 
-            catch (Exception ex)
+            catch (Exception ex) when (IsRecoverableLlmException(ex))
             {
                 _metrics?.IncrementLlmErrors();
                 _logger?.LogError(ex, "[{CorrelationId}] LLM call failed after all retries and fallbacks", turnCtx.CorrelationId);
@@ -851,7 +851,7 @@ public sealed class AgentRuntime : IAgentRuntime
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableContextException(ex))
         {
             _logger?.LogWarning(ex, "Memory recall injection failed; continuing without recall.");
             return false;
@@ -964,7 +964,7 @@ public sealed class AgentRuntime : IAgentRuntime
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableContextException(ex))
         {
             _logger?.LogWarning(ex, "User profile recall injection failed; continuing without profile context.");
         }
@@ -1065,7 +1065,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 LogTurnComplete(turnCtx);
                 return result;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsRecoverableLlmException(ex))
             {
                 _metrics?.IncrementLlmErrors();
                 _logger?.LogError(ex, "[{CorrelationId}] Streaming LLM call failed after all retries and fallbacks", turnCtx.CorrelationId);
@@ -1160,7 +1160,7 @@ public sealed class AgentRuntime : IAgentRuntime
             {
                 throw; // External cancellation, propagate immediately
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsRecoverableLlmException(ex))
             {
                 lastException = ex;
                 _providerUsage?.RecordError(_config.Provider, model);
@@ -1536,12 +1536,29 @@ public sealed class AgentRuntime : IAgentRuntime
                 TrimHistory(session);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableContextException(ex))
         {
             _logger?.LogWarning(ex, "History compaction failed — falling back to simple trim");
             TrimHistory(session);
         }
     }
+
+    private static bool IsRecoverableContextException(Exception ex)
+        => ex is IOException
+            or JsonException
+            or InvalidOperationException
+            or NotSupportedException
+            or TimeoutException
+            or UnauthorizedAccessException
+            or TaskCanceledException;
+
+    private static bool IsRecoverableLlmException(Exception ex)
+        => ex is HttpRequestException
+            or IOException
+            or InvalidOperationException
+            or NotSupportedException
+            or TimeoutException
+            or TaskCanceledException;
 
     private List<ChatMessage> BuildMessages(Session session, bool exactLatestToolBatch = false)
     {

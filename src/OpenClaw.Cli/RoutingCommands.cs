@@ -1,5 +1,6 @@
 using OpenClaw.Core.Models;
 using System.Globalization;
+using System.Text.Json;
 
 namespace OpenClaw.Cli;
 
@@ -60,7 +61,7 @@ internal static class RoutingCommands
             output.WriteLine($"routing onboard completed with router={mode} ({GatewayConfigFile.QuoteIfNeeded(path)})");
             return 0;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsExpectedConfigException(ex))
         {
             error.WriteLine(ex.Message);
             return 1;
@@ -102,7 +103,7 @@ internal static class RoutingCommands
             WriteTier("T3", tiers.T3, output);
             return Task.FromResult(0);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsExpectedConfigException(ex))
         {
             error.WriteLine(ex.Message);
             return Task.FromResult(1);
@@ -128,7 +129,7 @@ internal static class RoutingCommands
             output.WriteLine($"deepTurnThreshold={policy.DeepConversationTurnIndexThreshold}");
             return Task.FromResult(0);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsExpectedConfigException(ex))
         {
             error.WriteLine(ex.Message);
             return Task.FromResult(1);
@@ -159,7 +160,7 @@ internal static class RoutingCommands
             output.WriteLine($"routing diagnostics set to {mode} ({GatewayConfigFile.QuoteIfNeeded(path)})");
             return 0;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsExpectedConfigException(ex))
         {
             error.WriteLine(ex.Message);
             return 1;
@@ -207,7 +208,7 @@ internal static class RoutingCommands
             output.WriteLine($"routing configure router saved ({GatewayConfigFile.QuoteIfNeeded(path)})");
             return 0;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsExpectedConfigException(ex))
         {
             error.WriteLine(ex.Message);
             return 1;
@@ -254,7 +255,7 @@ internal static class RoutingCommands
             output.WriteLine($"routing configure providers saved for {tierName.ToUpperInvariant()} ({GatewayConfigFile.QuoteIfNeeded(path)})");
             return 0;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsExpectedConfigException(ex))
         {
             error.WriteLine(ex.Message);
             return 1;
@@ -263,6 +264,14 @@ internal static class RoutingCommands
 
     private static string ResolveConfigPath(CliArgs parsed)
         => Path.GetFullPath(GatewayConfigFile.ExpandPath(parsed.GetOption(ConfigOption) ?? GatewayConfigFile.DefaultConfigPath));
+
+    private static bool IsExpectedConfigException(Exception ex)
+        => ex is IOException
+            or UnauthorizedAccessException
+            or JsonException
+            or InvalidOperationException
+            or ArgumentException
+            or NotSupportedException;
 
     private static DynamicTurnRoutingTierTarget ResolveTier(DynamicTurnRoutingTierMap tiers, string tierName)
         => tierName.Trim().ToUpperInvariant() switch

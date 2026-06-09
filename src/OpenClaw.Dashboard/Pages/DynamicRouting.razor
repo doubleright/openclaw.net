@@ -740,7 +740,7 @@
             EnsurePolicyDraftDefaults();
             _hasLoaded = true;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsExpectedDashboardOperationException(ex))
         {
             Logger.LogWarning(ex, "Failed to load Dynamic Routing dashboard data.");
             _error = L["common.error"];
@@ -877,7 +877,7 @@
                 Snackbar.Add(await ReadResponseMessageAsync(response), Severity.Error);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsExpectedDashboardOperationException(ex))
         {
             Snackbar.Add(ex.Message, Severity.Error);
         }
@@ -963,7 +963,7 @@
             var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             return string.IsNullOrWhiteSpace(content) ? $"Request failed ({(int)response.StatusCode})" : content;
         }
-        catch
+        catch (Exception ex) when (IsExpectedDashboardOperationException(ex))
         {
             return $"Request failed ({(int)response.StatusCode})";
         }
@@ -981,6 +981,15 @@
         using var document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
         return document.RootElement.Clone();
     }
+
+    private static bool IsExpectedDashboardOperationException(Exception ex)
+        => ex is HttpRequestException
+            or IOException
+            or InvalidOperationException
+            or JsonException
+            or NotSupportedException
+            or ObjectDisposedException
+            or TaskCanceledException;
 
     private static List<JsonElement> ReadObjectArray(JsonElement? root, params string[] path)
     {
