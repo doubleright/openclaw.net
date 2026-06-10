@@ -290,20 +290,22 @@ public sealed class ObservabilityTests
 
         try
         {
-            var observer = new TurnTokenUsageAuditLog(filePath);
-            observer.RecordTurn(new OpenClaw.Core.Models.TurnTokenUsageRecord
+            using (var observer = new TurnTokenUsageAuditLog(filePath))
             {
-                SessionId = "session-1",
-                ChannelId = "ws",
-                ProviderId = "openai",
-                ModelId = "gpt-4o",
-                InputTokens = 11,
-                OutputTokens = 22,
-                CacheReadTokens = 3,
-                CacheWriteTokens = 4,
-                EstimatedInputTokensByComponent = new OpenClaw.Core.Models.InputTokenComponentEstimate(),
-                IsEstimated = false
-            });
+                observer.RecordTurn(new OpenClaw.Core.Models.TurnTokenUsageRecord
+                {
+                    SessionId = "session-1",
+                    ChannelId = "ws",
+                    ProviderId = "openai",
+                    ModelId = "gpt-4o",
+                    InputTokens = 11,
+                    OutputTokens = 22,
+                    CacheReadTokens = 3,
+                    CacheWriteTokens = 4,
+                    EstimatedInputTokensByComponent = new OpenClaw.Core.Models.InputTokenComponentEstimate(),
+                    IsEstimated = false
+                });
+            }
 
             var line = Assert.Single(File.ReadAllLines(filePath));
             var record = JsonSerializer.Deserialize<OpenClaw.Core.Models.TurnTokenUsageRecord>(line);
@@ -311,6 +313,59 @@ public sealed class ObservabilityTests
             Assert.Equal("session-1", record!.SessionId);
             Assert.Equal(11, record.InputTokens);
             Assert.Equal(22, record.OutputTokens);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TurnTokenUsageAuditLog_ConcurrentWrites_FlushesAllOnDispose()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "openclaw-turn-token-audit-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var filePath = Path.Combine(root, "turn-token-usage-concurrent.jsonl");
+        const int totalWrites = 256;
+
+        try
+        {
+            using (var observer = new TurnTokenUsageAuditLog(filePath))
+            {
+                var tasks = Enumerable.Range(0, totalWrites)
+                    .Select(i => Task.Run(() =>
+                    {
+                        observer.RecordTurn(new OpenClaw.Core.Models.TurnTokenUsageRecord
+                        {
+                            SessionId = "session-concurrent",
+                            ChannelId = "ws",
+                            ProviderId = "openai",
+                            ModelId = "gpt-4o",
+                            InputTokens = i,
+                            OutputTokens = totalWrites - i,
+                            CacheReadTokens = 0,
+                            CacheWriteTokens = 0,
+                            EstimatedInputTokensByComponent = new OpenClaw.Core.Models.InputTokenComponentEstimate(),
+                            IsEstimated = false
+                        });
+                    }))
+                    .ToArray();
+
+                await Task.WhenAll(tasks);
+            }
+
+            var lines = File.ReadAllLines(filePath);
+            Assert.Equal(totalWrites, lines.Length);
+
+            var observedInputs = lines
+                .Select(line => JsonSerializer.Deserialize<OpenClaw.Core.Models.TurnTokenUsageRecord>(line))
+                .Where(record => record is not null)
+                .Select(record => record!.InputTokens)
+                .OrderBy(value => value)
+                .ToArray();
+
+            Assert.Equal(totalWrites, observedInputs.Length);
+            Assert.Equal(Enumerable.Range(0, totalWrites).Select(i => (long)i).ToArray(), observedInputs);
         }
         finally
         {

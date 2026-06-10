@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
@@ -9,11 +10,13 @@ namespace OpenClaw.Core.Observability;
 /// <summary>
 /// Thread-safe, append-only JSON-lines writer for per-turn token usage.
 /// </summary>
-public sealed class TurnTokenUsageAuditLog : ITurnTokenUsageObserver
+public sealed class TurnTokenUsageAuditLog : ITurnTokenUsageObserver, IDisposable
 {
-    private readonly object _sync = new();
     private readonly string? _filePath;
     private readonly ILogger<TurnTokenUsageAuditLog>? _logger;
+    private readonly Channel<string>? _lineChannel;
+    private readonly Task? _writerTask;
+    private int _disposed;
 
     public TurnTokenUsageAuditLog(string? filePath, ILogger<TurnTokenUsageAuditLog>? logger = null)
     {
@@ -28,6 +31,14 @@ public sealed class TurnTokenUsageAuditLog : ITurnTokenUsageObserver
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
             _filePath = fullPath;
+
+            _lineChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                AllowSynchronousContinuations = false
+            });
+            _writerTask = Task.Run(() => WriteLoopAsync(fullPath, _lineChannel.Reader));
         }
         catch (Exception ex)
         {
@@ -38,22 +49,75 @@ public sealed class TurnTokenUsageAuditLog : ITurnTokenUsageObserver
 
     public void RecordTurn(TurnTokenUsageRecord record)
     {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
         var filePath = _filePath;
-        if (string.IsNullOrWhiteSpace(filePath))
+        var lineChannel = _lineChannel;
+        if (string.IsNullOrWhiteSpace(filePath) || lineChannel is null)
             return;
 
         try
         {
             var json = JsonSerializer.Serialize(record, TurnTokenUsageJsonContext.Default.TurnTokenUsageRecord);
-            lock (_sync)
+            if (!lineChannel.Writer.TryWrite(json))
             {
-                File.AppendAllText(filePath, json + Environment.NewLine);
+                _logger?.LogWarning("Failed to enqueue turn token usage entry for session {SessionId}", record.SessionId);
             }
         }
         catch (Exception ex)
         {
             _logger?.LogWarning(ex, "Failed to append turn token usage entry to {Path}", filePath);
         }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        if (_lineChannel is null)
+            return;
+
+        _lineChannel.Writer.TryComplete();
+
+        if (_writerTask is null)
+            return;
+
+        try
+        {
+            _writerTask.GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Failed to flush turn token usage audit log during disposal");
+        }
+    }
+
+    private async Task WriteLoopAsync(string filePath, ChannelReader<string> reader)
+    {
+        await using var stream = new FileStream(
+            filePath,
+            FileMode.Append,
+            FileAccess.Write,
+            FileShare.Read,
+            bufferSize: 4096,
+            FileOptions.Asynchronous);
+        await using var writer = new StreamWriter(stream);
+
+        await foreach (var line in reader.ReadAllAsync())
+        {
+            try
+            {
+                await writer.WriteLineAsync(line);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to append turn token usage entry to {Path}", filePath);
+            }
+        }
+
+        await writer.FlushAsync();
     }
 }
 
