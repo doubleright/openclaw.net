@@ -1,0 +1,1124 @@
+@page "/dynamic-routing"
+@implements IDisposable
+@inject ApiService Api
+@inject LocalizationService L
+@inject AuthService Auth
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ILogger<DynamicRouting> Logger
+
+@using System.Text.Json
+
+<PageTitle>@L["routing.title"] · OpenClaw</PageTitle>
+
+@if (!Auth.HasRole("admin"))
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="my-4">
+        @L["auth.notAuthenticated"]
+    </MudAlert>
+    return;
+}
+
+<div class="dr-shell">
+    <header class="dr-hero">
+        <div class="dr-hero__crumb">
+            <span class="dr-hero__index">03</span>
+            <span class="dr-hero__slash">/</span>
+            <span class="dr-hero__crumb-text">routing · dynamic turn control</span>
+        </div>
+        <h1 class="dr-hero__title">@L["routing.title"]</h1>
+        <p class="dr-hero__lead">@L["routing.subtitle"]</p>
+
+        <div class="dr-hero__rail">
+            <MudButton StartIcon="@Icons.Material.Filled.Refresh"
+                       Variant="Variant.Outlined"
+                       Color="Color.Default"
+                       Disabled="_loading"
+                       OnClick="LoadData"
+                       Class="dr-btn dr-btn--ghost">
+                @L["common.refresh"]
+            </MudButton>
+        </div>
+    </header>
+
+    @if (_loading && !_hasLoaded)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="mb-4" />
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">
+            @_error
+        </MudAlert>
+    }
+
+    <div class="dr-grid">
+        <article class="dr-metric" style="--metric-accent:#8b5cf6;">
+            <div class="dr-metric__label">@L["routing.defaultProfile"]</div>
+            <div class="dr-metric__value">@(_defaultProfileId ?? "—")</div>
+            <div class="dr-metric__hint">@L["routing.routeContract"]</div>
+        </article>
+
+        <article class="dr-metric" style="--metric-accent:#22d3ee;">
+            <div class="dr-metric__label">@L["routing.profileCount"]</div>
+            <div class="dr-metric__value">@_profileCount</div>
+            <div class="dr-metric__hint">@L["routing.profileInventory"]</div>
+        </article>
+
+        <article class="dr-metric" style="--metric-accent:#34d399;">
+            <div class="dr-metric__label">@L["routing.dynamicRoutes"]</div>
+            <div class="dr-metric__value">@_dynamicRouteCount</div>
+            <div class="dr-metric__hint">@L["routing.routeHealth"]</div>
+        </article>
+
+        <article class="dr-metric" style="--metric-accent:#f59e0b;">
+            <div class="dr-metric__label">@L["routing.policyCount"]</div>
+            <div class="dr-metric__value">@_policyCount</div>
+            <div class="dr-metric__hint">@L["routing.policyRules"]</div>
+        </article>
+
+        <MudPaper Class="dr-panel dr-panel--wide" Elevation="0">
+            <div class="dr-panel__head">
+                <span class="dr-eyebrow">A · @L["routing.routeContract"]</span>
+                <span class="dr-panel__rule"></span>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                    @L["routing.title"]
+                </MudChip>
+            </div>
+            <div class="dr-panel__body">
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Timeline">
+                    @L["routing.routeContractBody"]
+                </MudAlert>
+                <div class="dr-contract-grid">
+                    <div class="dr-contract-item">
+                        <div class="dr-contract-item__label">@L["routing.defaultProfile"]</div>
+                        <div class="dr-contract-item__value">@(_defaultProfileId ?? "—")</div>
+                    </div>
+                    <div class="dr-contract-item">
+                        <div class="dr-contract-item__label">@L["routing.profileInventory"]</div>
+                        <div class="dr-contract-item__value">@_profileCount</div>
+                    </div>
+                    <div class="dr-contract-item">
+                        <div class="dr-contract-item__label">@L["routing.routeHealth"]</div>
+                        <div class="dr-contract-item__value">@_routeCount</div>
+                    </div>
+                    <div class="dr-contract-item">
+                        <div class="dr-contract-item__label">@L["routing.policyRules"]</div>
+                        <div class="dr-contract-item__value">@_policyCount</div>
+                    </div>
+                </div>
+            </div>
+        </MudPaper>
+
+        <MudPaper Class="dr-panel dr-panel--wide" Elevation="0">
+            <div class="dr-panel__head">
+                <span class="dr-eyebrow">B · @L["routing.profileInventory"]</span>
+                <span class="dr-panel__rule"></span>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">JSON</MudChip>
+            </div>
+            <div class="dr-panel__body dr-panel__body--flush">
+                <MudTable T="JsonElement"
+                          Items="_profiles"
+                          Dense="true"
+                          Hover="true"
+                          Bordered="false"
+                          Striped="true"
+                          Elevation="0">
+                    <HeaderContent>
+                        <MudTh>@L["routing.profileId"]</MudTh>
+                        <MudTh>@L["routing.providerModel"]</MudTh>
+                        <MudTh>@L["routing.status"]</MudTh>
+                        <MudTh>@L["routing.capabilities"]</MudTh>
+                        <MudTh>@L["routing.tags"]</MudTh>
+                        <MudTh>@L["routing.fallbacks"]</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="@L["routing.profileId"]">
+                            <div class="dr-id">@ReadString(context, "id")</div>
+                            @if (!string.IsNullOrWhiteSpace(ReadString(context, "presetId")))
+                            {
+                                <div class="dr-sub">@ReadString(context, "presetId")</div>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.providerModel"]">
+                            <div class="dr-stack">
+                                <span>@ReadString(context, "providerId")</span>
+                                <span>@ReadString(context, "modelId")</span>
+                            </div>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.status"]">
+                            <div class="dr-chiprow">
+                                @if (ReadBool(context, "isDefault"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary">@L["routing.default"]</MudChip>
+                                }
+                                @if (ReadBool(context, "isAvailable"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Success">@L["routing.available"]</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error">@L["common.disabled"]</MudChip>
+                                }
+                                @if (ReadBool(context, "isImplicit"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Tertiary">@L["routing.implicit"]</MudChip>
+                                }
+                            </div>
+                            @if (ReadStringArray(context, "validationIssues").Count > 0)
+                            {
+                                <div class="dr-sub dr-sub--warn">@string.Join(" · ", ReadStringArray(context, "validationIssues"))</div>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.capabilities"]">
+                            <div class="dr-chiprow">
+                                @foreach (var capability in BuildCapabilityLabels(context))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">@capability</MudChip>
+                                }
+                            </div>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.tags"]">
+                            <div class="dr-chiprow">
+                                @foreach (var tag in ReadStringArray(context, "tags"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">@tag</MudChip>
+                                }
+                            </div>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.fallbacks"]">
+                            <div class="dr-chiprow">
+                                @foreach (var fallback in ReadStringArray(context, "fallbackProfileIds"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Tertiary">@fallback</MudChip>
+                                }
+                            </div>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <div class="dr-empty">@L["common.noData"]</div>
+                    </NoRecordsContent>
+                </MudTable>
+            </div>
+        </MudPaper>
+
+        <MudPaper Class="dr-panel dr-panel--wide" Elevation="0">
+            <div class="dr-panel__head">
+                <span class="dr-eyebrow">C · @L["routing.routeHealth"]</span>
+                <span class="dr-panel__rule"></span>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success">@_dynamicRouteCount dynamic</MudChip>
+            </div>
+            <div class="dr-panel__body dr-panel__body--flush">
+                <MudTable T="JsonElement"
+                          Items="_routes"
+                          Dense="true"
+                          Hover="true"
+                          Bordered="false"
+                          Striped="true"
+                          Elevation="0">
+                    <HeaderContent>
+                        <MudTh>@L["routing.route"]</MudTh>
+                        <MudTh>@L["routing.status"]</MudTh>
+                        <MudTh>@L["routing.metrics"]</MudTh>
+                        <MudTh>@L["routing.tags"]</MudTh>
+                        <MudTh>@L["routing.validationIssues"]</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="@L["routing.route"]">
+                            <div class="dr-stack">
+                                <span>@ReadString(context, "profileId")</span>
+                                <span>@(string.Concat(ReadString(context, "providerId"), "/", ReadString(context, "modelId")))</span>
+                            </div>
+                            <div class="dr-chiprow dr-chiprow--tight">
+                                @if (ReadBool(context, "isDefaultRoute"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary">@L["routing.default"]</MudChip>
+                                }
+                                @if (ReadBool(context, "isDynamic"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Success">@L["routing.dynamic"]</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">@L["routing.static"]</MudChip>
+                                }
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(ReadString(context, "ownerId")))
+                            {
+                                <div class="dr-sub">@L["routing.owner"]: @ReadString(context, "ownerId")</div>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.status"]">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@CircuitColor(ReadString(context, "circuitState"))">
+                                @ReadString(context, "circuitState")
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.metrics"]">
+                            <div class="dr-sub">@L["routing.requests"]: @ReadLong(context, "requests")</div>
+                            <div class="dr-sub">@L["routing.errors"]: @ReadLong(context, "errors")</div>
+                            @if (ReadLong(context, "retries") > 0)
+                            {
+                                <div class="dr-sub">Retries: @ReadLong(context, "retries")</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(ReadString(context, "lastError")))
+                            {
+                                <div class="dr-sub dr-sub--warn">@ReadString(context, "lastError")</div>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.tags"]">
+                            <div class="dr-chiprow">
+                                @foreach (var tag in ReadStringArray(context, "tags"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">@tag</MudChip>
+                                }
+                            </div>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.validationIssues"]">
+                            @if (ReadStringArray(context, "validationIssues").Count == 0)
+                            {
+                                <span class="dr-sub">@L["routing.noIssues"]</span>
+                            }
+                            else
+                            {
+                                <div class="dr-sub dr-sub--warn">@string.Join(" · ", ReadStringArray(context, "validationIssues"))</div>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <div class="dr-empty">@L["common.noData"]</div>
+                    </NoRecordsContent>
+                </MudTable>
+            </div>
+        </MudPaper>
+
+        <MudPaper Class="dr-panel dr-panel--wide" Elevation="0">
+            <div class="dr-panel__head">
+                <span class="dr-eyebrow">D · @L["routing.policyEditor"]</span>
+                <span class="dr-panel__rule"></span>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">
+                    @(_editingPolicyId is null ? L["common.create"] : L["common.edit"])
+                </MudChip>
+            </div>
+            <div class="dr-panel__body">
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Info" Class="mb-4">
+                    @L["routing.policyEditorHint"]
+                </MudAlert>
+
+                <div class="dr-policy-grid">
+                    <MudTextField T="string"
+                                  Label="@L["routing.policyId"]"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  @bind-Value="_policyId" />
+
+                    <MudNumericField T="int"
+                                     Label="@L["routing.priority"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     @bind-Value="_policyPriority" />
+
+                    <MudTextField T="string"
+                                  Label="@L["routing.policyProviderId"]"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  @bind-Value="_policyProviderId" />
+
+                    <MudTextField T="string"
+                                  Label="@L["routing.policyModelId"]"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  @bind-Value="_policyModelId" />
+
+                    <MudTextField T="string"
+                                  Label="@L["routing.policyFallbackModels"]"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  HelperText="Comma-separated"
+                                  @bind-Value="_policyFallbackModels" />
+
+                    <MudTextField T="string"
+                                  Label="@L["routing.policyChannelId"]"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  @bind-Value="_policyChannelId" />
+
+                    <MudTextField T="string"
+                                  Label="@L["routing.policySenderId"]"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  @bind-Value="_policySenderId" />
+
+                    <MudTextField T="string"
+                                  Label="@L["routing.policySessionId"]"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  @bind-Value="_policySessionId" />
+
+                    <MudNumericField T="int"
+                                     Label="@L["routing.policyMaxInputTokens"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     @bind-Value="_policyMaxInputTokens" />
+
+                    <MudNumericField T="int"
+                                     Label="@L["routing.policyMaxOutputTokens"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     @bind-Value="_policyMaxOutputTokens" />
+
+                    <MudNumericField T="int"
+                                     Label="@L["routing.policyMaxTotalTokens"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     @bind-Value="_policyMaxTotalTokens" />
+
+                    <div class="dr-policy-switch">
+                        <div>
+                            <div class="dr-policy-switch__label">@L["routing.policyEnabled"]</div>
+                            <div class="dr-policy-switch__hint">@L["routing.policyEnabledHint"]</div>
+                        </div>
+                        <MudSwitch T="bool" @bind-Value="_policyEnabled" Color="Color.Primary" />
+                    </div>
+                </div>
+
+                <div class="dr-policy-actions">
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Default"
+                               StartIcon="@Icons.Material.Filled.Refresh"
+                               OnClick="ResetPolicyDraft">
+                        @L["common.reset"]
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@(_editingPolicyId is null ? Icons.Material.Filled.Add : Icons.Material.Filled.Save)"
+                               Disabled="_policySaving"
+                               OnClick="CreatePolicyAsync">
+                        @if (_policySaving)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        @(_editingPolicyId is null ? L["common.create"] : L["common.save"])
+                    </MudButton>
+                </div>
+            </div>
+        </MudPaper>
+
+        <MudPaper Class="dr-panel dr-panel--wide" Elevation="0">
+            <div class="dr-panel__head">
+                <span class="dr-eyebrow">E · @L["routing.policyRules"]</span>
+                <span class="dr-panel__rule"></span>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">Policy</MudChip>
+            </div>
+            <div class="dr-panel__body dr-panel__body--flush">
+                <MudTable T="JsonElement"
+                          Items="_policies"
+                          Dense="true"
+                          Hover="true"
+                          Bordered="false"
+                          Striped="true"
+                          Elevation="0">
+                    <HeaderContent>
+                        <MudTh>ID</MudTh>
+                        <MudTh>@L["routing.priority"]</MudTh>
+                        <MudTh>@L["routing.providerModel"]</MudTh>
+                        <MudTh>@L["routing.constraints"]</MudTh>
+                        <MudTh>@L["routing.tokenLimits"]</MudTh>
+                        <MudTh>@L["routing.actions"]</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="ID">
+                            <div class="dr-id">@ReadString(context, "id")</div>
+                            <div class="dr-chiprow dr-chiprow--tight">
+                                @if (ReadBool(context, "enabled"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Success">@L["common.enabled"]</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error">@L["common.disabled"]</MudChip>
+                                }
+                            </div>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.priority"]">@ReadLong(context, "priority")</MudTd>
+                        <MudTd DataLabel="@L["routing.providerModel"]">
+                            <div class="dr-stack">
+                                <span>@ReadString(context, "providerId")</span>
+                                <span>@ReadString(context, "modelId")</span>
+                            </div>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.constraints"]">
+                            <div class="dr-sub">@L["routing.channel"]: @ReadString(context, "channelId")</div>
+                            <div class="dr-sub">@L["routing.sender"]: @ReadString(context, "senderId")</div>
+                            <div class="dr-sub">@L["routing.session"]: @ReadString(context, "sessionId")</div>
+                            <div class="dr-chiprow dr-chiprow--tight">
+                                @foreach (var fallback in ReadStringArray(context, "fallbackModels"))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Tertiary">@fallback</MudChip>
+                                }
+                            </div>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.tokenLimits"]">
+                            <div class="dr-sub">Input: @ReadLong(context, "maxInputTokens")</div>
+                            <div class="dr-sub">Output: @ReadLong(context, "maxOutputTokens")</div>
+                            <div class="dr-sub">Total: @ReadLong(context, "maxTotalTokens")</div>
+                        </MudTd>
+                        <MudTd DataLabel="@L["routing.actions"]">
+                            <div class="dr-policy-actions dr-policy-actions--table">
+                                <MudButton Variant="Variant.Outlined"
+                                           Color="Color.Secondary"
+                                           Size="Size.Small"
+                                           StartIcon="@Icons.Material.Filled.Edit"
+                                           OnClick="@(() => EditPolicy(context))">
+                                    @L["common.edit"]
+                                </MudButton>
+
+                                <MudButton Variant="Variant.Outlined"
+                                           Color="Color.Primary"
+                                           Size="Size.Small"
+                                           StartIcon="@(ReadBool(context, "enabled") ? Icons.Material.Filled.ToggleOff : Icons.Material.Filled.ToggleOn)"
+                                           OnClick="@(() => TogglePolicyEnabledAsync(context))">
+                                    @(ReadBool(context, "enabled") ? L["routing.disablePolicy"] : L["routing.enablePolicy"])
+                                </MudButton>
+
+                                <MudButton Variant="Variant.Outlined"
+                                           Color="Color.Error"
+                                           Size="Size.Small"
+                                           StartIcon="@Icons.Material.Filled.Delete"
+                                           OnClick="@(() => DeletePolicyAsync(context))">
+                                    @L["common.delete"]
+                                </MudButton>
+                            </div>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <div class="dr-empty">@L["common.noData"]</div>
+                    </NoRecordsContent>
+                </MudTable>
+            </div>
+        </MudPaper>
+    </div>
+</div>
+
+<style>
+    .dr-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+        padding: 8px 4px 48px;
+        max-width: 1480px;
+        margin: 0 auto;
+    }
+
+    .dr-hero {
+        position: relative;
+        padding: 26px 32px 28px;
+        border-radius: 24px;
+        background:
+            radial-gradient(720px 320px at 0% 0%, rgba(56, 189, 248, 0.16), transparent 60%),
+            radial-gradient(720px 320px at 100% 100%, rgba(139, 92, 246, 0.14), transparent 65%),
+            linear-gradient(180deg, rgba(20, 26, 50, 0.55), rgba(11, 16, 32, 0.4));
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        overflow: hidden;
+    }
+
+    .dr-hero__crumb {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--mud-palette-text-secondary);
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: 0.74rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+    }
+
+    .dr-hero__index { color: #38bdf8; }
+    .dr-hero__title { margin: 14px 0 6px; font-size: clamp(2rem, 4vw, 3.25rem); font-weight: 700; letter-spacing: -0.04em; }
+    .dr-hero__lead { margin: 0; max-width: 72ch; color: var(--mud-palette-text-secondary); font-size: 1rem; line-height: 1.6; }
+    .dr-hero__rail { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+    .dr-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1rem;
+    }
+
+    .dr-metric {
+        position: relative;
+        padding: 18px 18px 20px;
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+        border: 1px solid var(--mud-palette-lines-default);
+        overflow: hidden;
+    }
+
+    .dr-metric::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(300px 120px at top left, color-mix(in srgb, var(--metric-accent) 22%, transparent), transparent 60%);
+        pointer-events: none;
+    }
+
+    .dr-metric__label, .dr-contract-item__label {
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--mud-palette-text-secondary);
+        position: relative;
+        z-index: 1;
+    }
+
+    .dr-metric__value {
+        margin-top: 10px;
+        font-size: 1.4rem;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        position: relative;
+        z-index: 1;
+        word-break: break-word;
+    }
+
+    .dr-metric__hint { margin-top: 8px; color: var(--mud-palette-text-secondary); font-size: 0.9rem; position: relative; z-index: 1; }
+
+    .dr-panel {
+        border: 1px solid var(--mud-palette-lines-default);
+        border-radius: 18px;
+        overflow: hidden;
+        background: var(--mud-palette-surface);
+    }
+
+    .dr-panel--wide { grid-column: 1 / -1; }
+
+    .dr-panel__head {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.95rem 1.1rem;
+        border-bottom: 1px solid var(--mud-palette-lines-default);
+        background: linear-gradient(180deg, rgba(56,189,248,0.04), transparent);
+    }
+
+    .dr-panel__rule { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(148,163,184,0.25), transparent); }
+
+    .dr-panel__body { padding: 1.1rem; display: flex; flex-direction: column; gap: 1rem; }
+    .dr-panel__body--flush { padding: 0; }
+
+    .dr-eyebrow {
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: 0.72rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .dr-contract-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.75rem;
+    }
+
+    .dr-contract-item {
+        padding: 0.95rem 1rem;
+        border-radius: 14px;
+        border: 1px solid var(--mud-palette-lines-default);
+        background: rgba(255,255,255,0.02);
+    }
+
+    .dr-contract-item__value, .dr-id, .dr-stack span:first-child { font-weight: 700; letter-spacing: -0.01em; }
+    .dr-contract-item__value { margin-top: 6px; word-break: break-word; }
+
+    .dr-stack { display: flex; flex-direction: column; gap: 0.15rem; }
+    .dr-sub { color: var(--mud-palette-text-secondary); font-size: 0.85rem; margin-top: 0.2rem; word-break: break-word; }
+    .dr-sub--warn { color: var(--mud-palette-warning); }
+
+    .dr-chiprow { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+    .dr-chiprow--tight { margin-top: 0.35rem; }
+
+    .dr-policy-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.9rem;
+    }
+
+    .dr-policy-switch {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.9rem 1rem;
+        border: 1px solid var(--mud-palette-lines-default);
+        border-radius: 14px;
+        background: rgba(255,255,255,0.02);
+    }
+
+    .dr-policy-switch__label { font-weight: 700; }
+    .dr-policy-switch__hint { color: var(--mud-palette-text-secondary); font-size: 0.85rem; margin-top: 0.2rem; }
+
+    .dr-policy-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        margin-top: 1rem;
+    }
+
+    .dr-policy-actions--table {
+        justify-content: flex-start;
+        margin-top: 0;
+    }
+
+    .dr-empty {
+        padding: 2rem;
+        text-align: center;
+        color: var(--mud-palette-text-secondary);
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: 0.85rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+    }
+</style>
+
+@code {
+    private JsonElement? _providerState;
+    private string? _defaultProfileId;
+    private List<JsonElement> _profiles = new();
+    private List<JsonElement> _routes = new();
+    private List<JsonElement> _policies = new();
+    private bool _loading = true;
+    private bool _hasLoaded;
+    private string? _error;
+
+    private string _policyId = string.Empty;
+    private int _policyPriority;
+    private string _policyProviderId = string.Empty;
+    private string _policyModelId = string.Empty;
+    private string _policyFallbackModels = string.Empty;
+    private string _policyChannelId = string.Empty;
+    private string _policySenderId = string.Empty;
+    private string _policySessionId = string.Empty;
+    private int _policyMaxInputTokens;
+    private int _policyMaxOutputTokens;
+    private int _policyMaxTotalTokens;
+    private bool _policyEnabled;
+    private bool _policySaving;
+    private string? _editingPolicyId;
+
+    private int _profileCount;
+    private int _routeCount;
+    private int _dynamicRouteCount;
+    private int _policyCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        L.OnLanguageChanged += HandleLanguageChanged;
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            _providerState = await TryGetJsonAsync("admin/providers").ConfigureAwait(false);
+            _defaultProfileId = ReadString(_providerState, "modelProfiles", "defaultProfileId");
+            _profiles = ReadObjectArray(_providerState, "modelProfiles", "profiles");
+            _routes = ReadObjectArray(_providerState, "routes");
+            _policies = ReadObjectArray(_providerState, "policies");
+
+            _profileCount = _profiles.Count;
+            _routeCount = _routes.Count;
+            _dynamicRouteCount = _routes.Count(route => ReadBool(route, "isDynamic"));
+            _policyCount = _policies.Count;
+            EnsurePolicyDraftDefaults();
+            _hasLoaded = true;
+        }
+        catch (Exception ex) when (IsExpectedDashboardOperationException(ex))
+        {
+            Logger.LogWarning(ex, "Failed to load Dynamic Routing dashboard data.");
+            _error = L["common.error"];
+            Snackbar.Add(L["common.error"], Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ResetPolicyDraft()
+    {
+        _editingPolicyId = null;
+        _policyId = string.Empty;
+        _policyPriority = 0;
+        _policyFallbackModels = string.Empty;
+        _policyChannelId = string.Empty;
+        _policySenderId = string.Empty;
+        _policySessionId = string.Empty;
+        _policyMaxInputTokens = 0;
+        _policyMaxOutputTokens = 0;
+        _policyMaxTotalTokens = 0;
+        _policyEnabled = false;
+
+        var profile = GetDefaultProfile();
+        if (profile is not null)
+        {
+            _policyProviderId = ReadString(profile, "providerId") ?? string.Empty;
+            _policyModelId = ReadString(profile, "modelId") ?? string.Empty;
+            _policyFallbackModels = string.Join(", ", ReadStringArray(profile, "fallbackProfileIds"));
+        }
+        else
+        {
+            _policyProviderId = string.Empty;
+            _policyModelId = string.Empty;
+        }
+    }
+
+    private void EnsurePolicyDraftDefaults()
+    {
+        if (!string.IsNullOrWhiteSpace(_policyProviderId) && !string.IsNullOrWhiteSpace(_policyModelId))
+        {
+            return;
+        }
+
+        ResetPolicyDraft();
+    }
+
+    private JsonElement? GetDefaultProfile()
+    {
+        if (!string.IsNullOrWhiteSpace(_defaultProfileId))
+        {
+            var matched = _profiles.FirstOrDefault(profile => string.Equals(ReadString(profile, "id"), _defaultProfileId, StringComparison.OrdinalIgnoreCase));
+            if (matched.ValueKind != JsonValueKind.Undefined)
+            {
+                return matched;
+            }
+        }
+
+        var firstProfile = _profiles.FirstOrDefault();
+        return firstProfile.ValueKind == JsonValueKind.Undefined ? null : firstProfile;
+    }
+
+    private object BuildPolicyPayload(bool? enabledOverride = null)
+        => new
+        {
+            id = string.IsNullOrWhiteSpace(_policyId) ? null : _policyId.Trim(),
+            priority = _policyPriority,
+            enabled = enabledOverride ?? _policyEnabled,
+            providerId = _policyProviderId.Trim(),
+            modelId = _policyModelId.Trim(),
+            fallbackModels = ParseFallbackModels(_policyFallbackModels),
+            channelId = NormalizeOptional(_policyChannelId),
+            senderId = NormalizeOptional(_policySenderId),
+            sessionId = NormalizeOptional(_policySessionId),
+            maxInputTokens = _policyMaxInputTokens,
+            maxOutputTokens = _policyMaxOutputTokens,
+            maxTotalTokens = _policyMaxTotalTokens
+        };
+
+    private object BuildPolicyPayload(JsonElement policy, bool? enabledOverride = null)
+        => new
+        {
+            id = ReadString(policy, "id"),
+            priority = ReadLong(policy, "priority"),
+            enabled = enabledOverride ?? ReadBool(policy, "enabled"),
+            providerId = ReadString(policy, "providerId") ?? string.Empty,
+            modelId = ReadString(policy, "modelId") ?? string.Empty,
+            fallbackModels = ReadStringArray(policy, "fallbackModels").ToArray(),
+            channelId = ReadString(policy, "channelId"),
+            senderId = ReadString(policy, "senderId"),
+            sessionId = ReadString(policy, "sessionId"),
+            maxInputTokens = ReadLong(policy, "maxInputTokens"),
+            maxOutputTokens = ReadLong(policy, "maxOutputTokens"),
+            maxTotalTokens = ReadLong(policy, "maxTotalTokens")
+        };
+
+    private static string[] ParseFallbackModels(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+    private static string? NormalizeOptional(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private async Task CreatePolicyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_policyProviderId) || string.IsNullOrWhiteSpace(_policyModelId))
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+            return;
+        }
+
+        _policySaving = true;
+        try
+        {
+            using var response = await Api.PostRawAsync("/admin/providers/policies", BuildPolicyPayload());
+            if (response.IsSuccessStatusCode)
+            {
+                Snackbar.Add(L["common.success"], Severity.Success);
+                ResetPolicyDraft();
+                await LoadData();
+            }
+            else
+            {
+                Snackbar.Add(await ReadResponseMessageAsync(response), Severity.Error);
+            }
+        }
+        catch (Exception ex) when (IsExpectedDashboardOperationException(ex))
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _policySaving = false;
+        }
+    }
+
+    private void EditPolicy(JsonElement policy)
+    {
+        _editingPolicyId = ReadString(policy, "id");
+        _policyId = _editingPolicyId ?? string.Empty;
+        _policyPriority = (int)ReadLong(policy, "priority");
+        _policyProviderId = ReadString(policy, "providerId") ?? string.Empty;
+        _policyModelId = ReadString(policy, "modelId") ?? string.Empty;
+        _policyFallbackModels = string.Join(", ", ReadStringArray(policy, "fallbackModels"));
+        _policyChannelId = ReadString(policy, "channelId") ?? string.Empty;
+        _policySenderId = ReadString(policy, "senderId") ?? string.Empty;
+        _policySessionId = ReadString(policy, "sessionId") ?? string.Empty;
+        _policyMaxInputTokens = (int)ReadLong(policy, "maxInputTokens");
+        _policyMaxOutputTokens = (int)ReadLong(policy, "maxOutputTokens");
+        _policyMaxTotalTokens = (int)ReadLong(policy, "maxTotalTokens");
+        _policyEnabled = ReadBool(policy, "enabled");
+    }
+
+    private async Task TogglePolicyEnabledAsync(JsonElement policy)
+    {
+        var policyId = ReadString(policy, "id");
+        if (string.IsNullOrWhiteSpace(policyId))
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+            return;
+        }
+
+        using var response = await Api.PostRawAsync("/admin/providers/policies", BuildPolicyPayload(policy, enabledOverride: !ReadBool(policy, "enabled")));
+        if (response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(L["common.success"], Severity.Success);
+            await LoadData();
+        }
+        else
+        {
+            Snackbar.Add(await ReadResponseMessageAsync(response), Severity.Error);
+        }
+    }
+
+    private async Task DeletePolicyAsync(JsonElement policy)
+    {
+        var policyId = ReadString(policy, "id");
+        if (string.IsNullOrWhiteSpace(policyId))
+        {
+            Snackbar.Add(L["common.error"], Severity.Error);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            L["routing.policyRules"],
+            L["routing.confirmDeleteProviderPolicy"],
+            yesText: L["common.delete"],
+            cancelText: L["common.cancel"]);
+        if (confirm != true)
+        {
+            return;
+        }
+
+        using var response = await Api.DeleteAsync($"/admin/providers/policies/{Uri.EscapeDataString(policyId)}");
+        if (response.IsSuccessStatusCode)
+        {
+            Snackbar.Add(L["common.success"], Severity.Success);
+            await LoadData();
+        }
+        else
+        {
+            Snackbar.Add(await ReadResponseMessageAsync(response), Severity.Error);
+        }
+    }
+
+    private static async Task<string> ReadResponseMessageAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(content) ? $"Request failed ({(int)response.StatusCode})" : content;
+        }
+        catch (Exception ex) when (IsExpectedDashboardOperationException(ex))
+        {
+            return $"Request failed ({(int)response.StatusCode})";
+        }
+    }
+
+    private async Task<JsonElement?> TryGetJsonAsync(string url)
+    {
+        using var response = await Api.GetRawAsync(url).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        using var document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+        return document.RootElement.Clone();
+    }
+
+    private static bool IsExpectedDashboardOperationException(Exception ex)
+        => ex is HttpRequestException
+            or IOException
+            or InvalidOperationException
+            or JsonException
+            or NotSupportedException
+            or ObjectDisposedException
+            or TaskCanceledException;
+
+    private static List<JsonElement> ReadObjectArray(JsonElement? root, params string[] path)
+    {
+        var element = TryGetProperty(root, path);
+        if (element is null || element.Value.ValueKind != JsonValueKind.Array)
+        {
+            return new List<JsonElement>();
+        }
+
+        return element.Value.EnumerateArray().Select(item => item.Clone()).ToList();
+    }
+
+    private static JsonElement? TryGetProperty(JsonElement? root, params string[] path)
+    {
+        if (root is null)
+        {
+            return null;
+        }
+
+        var current = root.Value;
+        foreach (var segment in path)
+        {
+            if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(segment, out var next))
+            {
+                return null;
+            }
+
+            current = next;
+        }
+
+        return current;
+    }
+
+    private static string? ReadString(JsonElement? root, params string[] path)
+    {
+        var element = TryGetProperty(root, path);
+        if (element is null)
+        {
+            return null;
+        }
+
+        return element.Value.ValueKind switch
+        {
+            JsonValueKind.String => element.Value.GetString(),
+            JsonValueKind.Null => null,
+            _ => element.Value.ToString()
+        };
+    }
+
+    private static bool ReadBool(JsonElement? root, params string[] path)
+    {
+        var element = TryGetProperty(root, path);
+        if (element is null)
+        {
+            return false;
+        }
+
+        if (element.Value.ValueKind == JsonValueKind.True || element.Value.ValueKind == JsonValueKind.False)
+        {
+            return element.Value.GetBoolean();
+        }
+
+        return bool.TryParse(element.Value.ToString(), out var result) && result;
+    }
+
+    private static long ReadLong(JsonElement? root, params string[] path)
+    {
+        var element = TryGetProperty(root, path);
+        if (element is null)
+        {
+            return 0;
+        }
+
+        if (element.Value.ValueKind == JsonValueKind.Number && element.Value.TryGetInt64(out var number))
+        {
+            return number;
+        }
+
+        return long.TryParse(element.Value.ToString(), out var parsed) ? parsed : 0;
+    }
+
+    private static List<string> ReadStringArray(JsonElement? root, params string[] path)
+    {
+        var element = TryGetProperty(root, path);
+        if (element is null || element.Value.ValueKind != JsonValueKind.Array)
+        {
+            return new List<string>();
+        }
+
+        return element.Value.EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString())
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .ToList()!;
+    }
+
+    private static List<string> BuildCapabilityLabels(JsonElement profile)
+    {
+        var capabilities = TryGetProperty(profile, "capabilities");
+        if (capabilities is null)
+        {
+            return [];
+        }
+
+        var labels = new List<string>();
+
+        if (ReadBool(capabilities, "supportsTools")) labels.Add("tools");
+        if (ReadBool(capabilities, "supportsVision")) labels.Add("vision");
+        if (ReadBool(capabilities, "supportsStructuredOutputs")) labels.Add("structured");
+        if (ReadBool(capabilities, "supportsJsonSchema")) labels.Add("json-schema");
+        if (ReadBool(capabilities, "supportsStreaming")) labels.Add("streaming");
+        if (ReadBool(capabilities, "supportsReasoningEffort")) labels.Add("reasoning");
+
+        return labels;
+    }
+
+    private static Color CircuitColor(string? circuitState)
+        => circuitState?.ToLowerInvariant() switch
+        {
+            "closed" => Color.Success,
+            "halfopen" => Color.Warning,
+            "half-open" => Color.Warning,
+            "open" => Color.Error,
+            _ => Color.Default
+        };
+
+    private void HandleLanguageChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        L.OnLanguageChanged -= HandleLanguageChanged;
+    }
+}

@@ -39,6 +39,7 @@ public sealed class GatewayConfig
     public ProfilesConfig Profiles { get; set; } = new();
     public LearningConfig Learning { get; set; } = new();
     public WebhooksConfig Webhooks { get; set; } = new();
+    public DynamicTurnRoutingConfig DynamicTurnRouting { get; set; } = new();
     public RoutingConfig Routing { get; set; } = new();
     public DeploymentConfig Deployment { get; set; } = new();
     public TailscaleConfig Tailscale { get; set; } = new();

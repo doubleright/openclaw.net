@@ -1,12 +1,14 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenClaw.Agent;
+using OpenClaw.Agent.Routing;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Observability;
@@ -27,6 +29,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
     private readonly RuntimeMetrics _metrics;
     private readonly ProviderUsageTracker _providerUsage;
     private readonly ILlmExecutionService _llmExecutionService;
+    private readonly ITurnRoutingPolicy _turnRoutingPolicy;
     private readonly ILogger? _logger;
     private readonly LlmProviderConfig _config;
     private readonly SkillsConfig? _skillsConfig;
@@ -83,6 +86,8 @@ public sealed class MafAgentRuntime : IAgentRuntime
         _metrics = context.RuntimeMetrics;
         _providerUsage = context.ProviderUsage;
         _llmExecutionService = context.LlmExecutionService;
+        _turnRoutingPolicy = context.Services.GetService(typeof(ITurnRoutingPolicy)) as ITurnRoutingPolicy
+            ?? NoopTurnRoutingPolicy.Instance;
         _logger = logger;
         _config = context.Config.Llm;
         _skillsConfig = context.SkillsConfig;
@@ -193,22 +198,26 @@ public sealed class MafAgentRuntime : IAgentRuntime
             return "You've reached the token limit for this session. Please start a new conversation.";
         }
 
-        ChatClientAgent agent = CreateAgent(session);
-        AgentSession mafSession = await _sessionStateStore.LoadAsync(agent, session, ct);
-        var toolInvocations = new List<ToolInvocation>();
-
-        session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
-
-        if (_enableCompaction)
-            await CompactHistoryAsync(session, ct);
-        else
-            TrimHistory(session);
-
-        var messages = BuildMessages(session);
-        await TryInjectRecallAsync(messages, userMessage, ct);
+        var sidecarHistoryHash = MafSessionStateStore.ComputeHistoryHash(session);
+        var turnRoutingScope = await ApplyTurnRoutingAsync(session, userMessage, responseSchema, ct);
+        var turnRoutingScopeDisposed = false;
 
         try
         {
+            ChatClientAgent agent = CreateAgent(session);
+            AgentSession mafSession = await _sessionStateStore.LoadAsync(agent, session, sidecarHistoryHash, ct);
+            var toolInvocations = new List<ToolInvocation>();
+
+            session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
+
+            if (_enableCompaction)
+                await CompactHistoryAsync(session, ct);
+            else
+                TrimHistory(session);
+
+            var messages = BuildMessages(session);
+            await TryInjectRecallAsync(messages, userMessage, ct);
+
             using var scope = MafExecutionContextScope.Push(new MafExecutionContext
             {
                 Session = session,
@@ -244,6 +253,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 Content = text
             });
 
+            DisposeTurnRoutingScope();
             await _sessionStateStore.SaveAsync(agent, session, mafSession, ct);
 
             if (TryRejectContractBudget(session, out contractBudgetMessage))
@@ -267,12 +277,25 @@ public sealed class MafAgentRuntime : IAgentRuntime
             LogTurnComplete(turnCtx);
             return ex.Message;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableLlmException(ex))
         {
             _metrics.IncrementLlmErrors();
             _logger?.LogError(ex, "[{CorrelationId}] MAF orchestration failed", turnCtx.CorrelationId);
             LogTurnComplete(turnCtx);
             return "Sorry, I'm having trouble reaching my AI provider right now. Please try again shortly.";
+        }
+        finally
+        {
+            DisposeTurnRoutingScope();
+        }
+
+        void DisposeTurnRoutingScope()
+        {
+            if (turnRoutingScopeDisposed)
+                return;
+
+            turnRoutingScope.Dispose();
+            turnRoutingScopeDisposed = true;
         }
     }
 
@@ -318,39 +341,77 @@ public sealed class MafAgentRuntime : IAgentRuntime
             yield break;
         }
 
-        ChatClientAgent agent = CreateAgent(session);
-        AgentSession mafSession = await _sessionStateStore.LoadAsync(agent, session, ct);
-        var eventChannel = Channel.CreateBounded<AgentStreamEvent>(new BoundedChannelOptions(256)
+        var sidecarHistoryHash = MafSessionStateStore.ComputeHistoryHash(session);
+        var turnRoutingScope = await ApplyTurnRoutingAsync(session, userMessage, responseSchema: null, ct);
+        var turnRoutingScopeDisposed = false;
+
+        Task? producer = null;
+        using var producerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        try
         {
-            SingleReader = true,
-            SingleWriter = true,
-            FullMode = BoundedChannelFullMode.Wait
-        });
+            ChatClientAgent agent = CreateAgent(session);
+            AgentSession mafSession = await _sessionStateStore.LoadAsync(agent, session, sidecarHistoryHash, ct);
 
-        session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
+            session.History.Add(new ChatTurn { Role = "user", Content = userMessage });
 
-        if (_enableCompaction)
-            await CompactHistoryAsync(session, ct);
-        else
-            TrimHistory(session);
+            if (_enableCompaction)
+                await CompactHistoryAsync(session, ct);
+            else
+                TrimHistory(session);
 
-        var messages = BuildMessages(session);
-        await TryInjectRecallAsync(messages, userMessage, ct);
+            var eventChannel = Channel.CreateBounded<AgentStreamEvent>(new BoundedChannelOptions(256)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.Wait
+            });
 
-        var producer = ProduceStreamingRunAsync(
-            session,
-            messages,
-            agent,
-            mafSession,
-            turnCtx,
-            approvalCallback,
-            eventChannel.Writer,
-            ct);
+            var messages = BuildMessages(session);
+            await TryInjectRecallAsync(messages, userMessage, ct);
 
-        await foreach (var evt in eventChannel.Reader.ReadAllAsync(ct))
-            yield return evt;
+            producer = ProduceStreamingRunAsync(
+                session,
+                messages,
+                agent,
+                mafSession,
+                turnCtx,
+                approvalCallback,
+                eventChannel.Writer,
+                DisposeTurnRoutingScope,
+                producerCts.Token);
 
-        await producer;
+            await foreach (var evt in eventChannel.Reader.ReadAllAsync(ct))
+                yield return evt;
+
+            await producer;
+        }
+        finally
+        {
+            if (producer is not null && !producer.IsCompleted)
+            {
+                producerCts.Cancel();
+                try
+                {
+                    await producer;
+                }
+                catch (OperationCanceledException ex) when (producerCts.IsCancellationRequested)
+                {
+                    _logger?.LogDebug(ex, "Streaming producer canceled during iterator shutdown.");
+                }
+            }
+
+            DisposeTurnRoutingScope();
+        }
+
+        void DisposeTurnRoutingScope()
+        {
+            if (turnRoutingScopeDisposed)
+                return;
+
+            turnRoutingScope.Dispose();
+            turnRoutingScopeDisposed = true;
+        }
     }
 
     private ChatClientAgent CreateAgent(Session session)
@@ -369,6 +430,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         TurnContext turnCtx,
         ToolApprovalCallback? approvalCallback,
         ChannelWriter<AgentStreamEvent> writer,
+        Action disposeTurnRoutingScope,
         CancellationToken ct)
     {
         var fullText = new StringBuilder();
@@ -421,6 +483,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 Content = fullText.ToString()
             });
 
+            disposeTurnRoutingScope();
             await _sessionStateStore.SaveAsync(agent, session, mafSession, ct);
 
             if (TryRejectContractBudget(session, out var contractBudgetMessage))
@@ -453,7 +516,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 throw;
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableLlmException(ex))
         {
             _metrics.IncrementLlmErrors();
             _logger?.LogError(ex, "[{CorrelationId}] MAF streaming orchestration failed", turnCtx.CorrelationId);
@@ -475,6 +538,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         }
         finally
         {
+            disposeTurnRoutingScope();
             writer.TryComplete();
         }
     }
@@ -516,8 +580,129 @@ public sealed class MafAgentRuntime : IAgentRuntime
         return systemPrompt + "\n\n[Route Instructions]\n" + session.SystemPromptOverride.Trim();
     }
 
+    private async ValueTask<IDisposable> ApplyTurnRoutingAsync(
+        Session session,
+        string userMessage,
+        System.Text.Json.JsonElement? responseSchema,
+        CancellationToken ct)
+    {
+        var baseOptions = CreateChatOptions(session, responseSchema);
+        baseOptions.Tools = _toolExecutor.GetToolDeclarations(session);
+
+        TurnRoutingDecision decision;
+        try
+        {
+            decision = await _turnRoutingPolicy.ResolveAsync(new TurnRoutingRequest
+            {
+                Session = session,
+                Messages = BuildMessages(session),
+                UserMessage = userMessage,
+                BaseOptions = baseOptions
+            }, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (IsRecoverableTurnRoutingPolicyException(ex))
+        {
+            _logger?.LogWarning(ex, "Turn routing policy failed; falling back to T2/default routing.");
+            decision = new TurnRoutingDecision
+            {
+                Tier = "T2",
+                Reason = "routing_policy_error"
+            };
+        }
+
+        var snapshot = new TurnRoutingSnapshot(
+            session.ModelProfileId,
+            session.PreferredModelTags,
+            session.FallbackModelProfileIds,
+            session.SystemPromptOverride,
+            session.RouteAllowedTools,
+            session.RouteToolsDisabled,
+            session.RouteModelTier,
+            session.RouteReason,
+            session.ReasoningEffort,
+            session.ResponseMode);
+
+        if (!string.IsNullOrWhiteSpace(decision.ModelProfileId))
+            session.ModelProfileId = decision.ModelProfileId;
+
+        if (!string.IsNullOrWhiteSpace(decision.DirectModelFallbackProfileId))
+        {
+            var fallback = decision.DirectModelFallbackProfileId!;
+            session.FallbackModelProfileIds =
+            [
+                fallback,
+                .. session.FallbackModelProfileIds.Where(item => !string.Equals(item, fallback, StringComparison.OrdinalIgnoreCase))
+            ];
+        }
+
+        if (decision.PreferredTags.Length > 0)
+            session.PreferredModelTags = decision.PreferredTags;
+        if (!string.IsNullOrWhiteSpace(decision.ReasoningLevel))
+            session.ReasoningEffort = decision.ReasoningLevel;
+        if (!string.IsNullOrWhiteSpace(decision.ResponsePolicy))
+            session.ResponseMode = decision.ResponsePolicy;
+        if (decision.DisableTools)
+        {
+            session.RouteToolsDisabled = true;
+            session.RouteAllowedTools = [];
+        }
+        else if (decision.AllowedTools.Length > 0)
+        {
+            session.RouteToolsDisabled = false;
+            session.RouteAllowedTools = decision.AllowedTools;
+        }
+        session.RouteModelTier = decision.Tier;
+        session.RouteReason = decision.Reason;
+        session.SystemPromptOverride = CombineSystemPromptOverride(snapshot.SystemPromptOverride, decision.SystemPromptSuffix);
+
+        return new TurnRoutingRestoreScope(session, snapshot);
+    }
+
+    private static string? CombineSystemPromptOverride(string? original, string? suffix)
+    {
+        if (string.IsNullOrWhiteSpace(suffix))
+            return original;
+
+        if (string.IsNullOrWhiteSpace(original))
+            return suffix.Trim();
+
+        return original.Trim() + "\n" + suffix.Trim();
+    }
+
     private int GetSystemPromptLength(Session session)
         => GetSystemPrompt(session).Length;
+
+    private readonly record struct TurnRoutingSnapshot(
+        string? ModelProfileId,
+        string[] PreferredModelTags,
+        string[] FallbackModelProfileIds,
+        string? SystemPromptOverride,
+        string[] RouteAllowedTools,
+        bool RouteToolsDisabled,
+        string? RouteModelTier,
+        string? RouteReason,
+        string? ReasoningEffort,
+        string ResponseMode);
+
+    private sealed class TurnRoutingRestoreScope(Session session, TurnRoutingSnapshot snapshot) : IDisposable
+    {
+        public void Dispose()
+        {
+            session.ModelProfileId = snapshot.ModelProfileId;
+            session.PreferredModelTags = snapshot.PreferredModelTags;
+            session.FallbackModelProfileIds = snapshot.FallbackModelProfileIds;
+            session.SystemPromptOverride = snapshot.SystemPromptOverride;
+            session.RouteAllowedTools = snapshot.RouteAllowedTools;
+            session.RouteToolsDisabled = snapshot.RouteToolsDisabled;
+            session.RouteReason = snapshot.RouteReason;
+            session.ReasoningEffort = snapshot.ReasoningEffort;
+            session.ResponseMode = snapshot.ResponseMode;
+        }
+    }
 
     private async ValueTask TryInjectRecallAsync(List<ChatMessage> messages, string userMessage, CancellationToken ct)
     {
@@ -572,7 +757,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
             var text = sb.ToString().TrimEnd();
             messages.Insert(Math.Min(1, messages.Count), new ChatMessage(ChatRole.User, text));
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableContextException(ex))
         {
             _logger?.LogWarning(ex, "MAF memory recall injection failed; continuing without recall.");
         }
@@ -653,12 +838,39 @@ public sealed class MafAgentRuntime : IAgentRuntime
                 Content = $"[Previous conversation summary: {summary}]"
             });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRecoverableContextException(ex))
         {
             _logger?.LogWarning(ex, "MAF history compaction failed; falling back to simple trim.");
             TrimHistory(session);
         }
     }
+
+    private static bool IsRecoverableContextException(Exception ex)
+        => ex is IOException
+            or JsonException
+            or InvalidOperationException
+            or NotSupportedException
+            or TimeoutException
+            or UnauthorizedAccessException
+            or TaskCanceledException;
+
+    private static bool IsRecoverableLlmException(Exception ex)
+        => ex is HttpRequestException
+            or IOException
+            or InvalidOperationException
+            or KeyNotFoundException
+            or NotSupportedException
+            or TimeoutException
+            or TaskCanceledException;
+
+    private static bool IsRecoverableTurnRoutingPolicyException(Exception ex)
+        => ex is IOException
+            or JsonException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException
+            or TimeoutException
+            or TaskCanceledException;
 
     private List<ChatMessage> BuildMessages(Session session)
     {

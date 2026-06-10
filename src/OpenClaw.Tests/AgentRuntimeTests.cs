@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using NSubstitute;
 using OpenClaw.Agent;
+using OpenClaw.Agent.Routing;
 using OpenClaw.Agent.Tools;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
@@ -68,6 +69,218 @@ public class AgentRuntimeTests
         Assert.Contains(user.Contents.OfType<UriContent>(), content =>
             content.Uri.ToString() == "data:image/png;base64,AAAA" &&
             content.MediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task RunAsync_TurnRoutingPolicy_FiltersTools_And_AppendsScopedPrompt()
+    {
+        IList<ChatMessage>? capturedMessages = null;
+        ChatOptions? capturedOptions = null;
+
+        _chatClient.GetResponseAsync(
+            Arg.Do<IList<ChatMessage>>(messages => capturedMessages = messages),
+            Arg.Do<ChatOptions>(options => capturedOptions = options),
+            Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new ChatResponse(new[] { new ChatMessage(ChatRole.Assistant, "ok") })));
+
+        var toolA = new CountingTool("read_file", "file result");
+        var toolB = new CountingTool("run_in_terminal", "terminal result");
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T1",
+                ModelProfileId = "mini-readonly",
+                AllowedTools = ["read_file"],
+                SystemPromptSuffix = "Keep the reply short and skip planning.",
+                Reason = "simple_read_only"
+            });
+
+        var agent = new AgentRuntime(
+            _chatClient,
+            [toolA, toolB],
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            turnRoutingPolicy: routing);
+
+        var session = new Session
+        {
+            Id = "sess-route",
+            SenderId = "user1",
+            ChannelId = "test-channel",
+            RouteAllowedTools = ["run_in_terminal"],
+            SystemPromptOverride = "Original route prompt",
+            ModelProfileId = "frontier-tools"
+        };
+
+        await agent.RunAsync(session, "Open README.md", CancellationToken.None);
+
+        Assert.NotNull(capturedMessages);
+        Assert.NotNull(capturedOptions);
+        Assert.Single(capturedOptions!.Tools!, tool => tool.Name == "read_file");
+        Assert.Contains(capturedMessages!, message =>
+            message.Role == ChatRole.System &&
+            message.Text?.Contains("Keep the reply short and skip planning.", StringComparison.Ordinal) == true);
+        Assert.Equal(["run_in_terminal"], session.RouteAllowedTools);
+        Assert.Equal("Original route prompt", session.SystemPromptOverride);
+        Assert.Equal("frontier-tools", session.ModelProfileId);
+        Assert.Equal("T1", session.RouteModelTier);
+        Assert.Null(session.RouteReason);
+    }
+
+    [Fact]
+    public async Task RunAsync_DisableToolsRoutingDecision_ExposesNoToolsToLlm()
+    {
+        ChatOptions? capturedOptions = null;
+        _chatClient.GetResponseAsync(
+            Arg.Any<IList<ChatMessage>>(),
+            Arg.Do<ChatOptions>(options => capturedOptions = options),
+            Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new ChatResponse(new[] { new ChatMessage(ChatRole.Assistant, "ok") })));
+
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T0",
+                DisableTools = true,
+                Reason = "disable_tools"
+            });
+
+        var agent = new AgentRuntime(
+            _chatClient,
+            [new CountingTool("read_file", "file result"), new CountingTool("shell", "shell result")],
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            turnRoutingPolicy: routing);
+        var session = new Session { Id = "sess-disable-tools", SenderId = "user1", ChannelId = "test-channel" };
+
+        await agent.RunAsync(session, "answer directly", CancellationToken.None);
+
+        Assert.NotNull(capturedOptions);
+        Assert.Empty(capturedOptions!.Tools!);
+        Assert.False(session.RouteToolsDisabled);
+    }
+
+    [Fact]
+    public async Task RunAsync_DefaultRoutingDecision_DoesNotClearManualAllowedToolsForActiveCall()
+    {
+        ChatOptions? capturedOptions = null;
+        _chatClient.GetResponseAsync(
+            Arg.Any<IList<ChatMessage>>(),
+            Arg.Do<ChatOptions>(options => capturedOptions = options),
+            Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new ChatResponse(new[] { new ChatMessage(ChatRole.Assistant, "ok") })));
+
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision());
+
+        var agent = new AgentRuntime(
+            _chatClient,
+            [new CountingTool("read_file", "file result"), new CountingTool("shell", "shell result")],
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            turnRoutingPolicy: routing);
+        var session = new Session
+        {
+            Id = "sess-manual-tools",
+            SenderId = "user1",
+            ChannelId = "test-channel",
+            RouteAllowedTools = ["shell"]
+        };
+
+        await agent.RunAsync(session, "use manual route", CancellationToken.None);
+
+        Assert.NotNull(capturedOptions);
+        Assert.Equal(["shell"], capturedOptions!.Tools!.Select(tool => tool.Name).ToArray());
+        Assert.Equal(["shell"], session.RouteAllowedTools);
+    }
+
+    [Fact]
+    public async Task RunAsync_TurnRoutingPolicy_PersistsRouteModelTierForNextTurn()
+    {
+        var observedPreviousTiers = new List<string?>();
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.Arg<TurnRoutingRequest>();
+                observedPreviousTiers.Add(request.Session.RouteModelTier);
+                return new TurnRoutingDecision
+                {
+                    Tier = observedPreviousTiers.Count == 1 ? "T3" : "T1",
+                    Reason = observedPreviousTiers.Count == 1 ? "first_route" : "second_route"
+                };
+            });
+
+        var agent = new AgentRuntime(
+            _chatClient,
+            [],
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            turnRoutingPolicy: routing);
+        var session = new Session { Id = "sess-sticky-tier", SenderId = "user1", ChannelId = "test-channel" };
+
+        await agent.RunAsync(session, "first", CancellationToken.None);
+        await agent.RunAsync(session, "second", CancellationToken.None);
+
+        Assert.Equal([null, "T3"], observedPreviousTiers);
+        Assert.Equal("T1", session.RouteModelTier);
+    }
+
+    [Fact]
+    public async Task RunAsync_TurnRoutingDecision_AppliesReasoningAndFallbackForActiveTurn_ThenRestoresSession()
+    {
+        ChatOptions? capturedOptions = null;
+        _chatClient.GetResponseAsync(
+            Arg.Any<IList<ChatMessage>>(),
+            Arg.Do<ChatOptions>(options => capturedOptions = options),
+            Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new ChatResponse(new[] { new ChatMessage(ChatRole.Assistant, "ok") })));
+
+        var routing = Substitute.For<ITurnRoutingPolicy>();
+        routing.ResolveAsync(Arg.Any<TurnRoutingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TurnRoutingDecision
+            {
+                Tier = "T2",
+                ModelProfileId = "frontier-tools",
+                DirectModelFallbackProfileId = "fallback-profile",
+                ReasoningLevel = "high",
+                ResponsePolicy = "detailed"
+            });
+
+        var agent = new AgentRuntime(
+            _chatClient,
+            [],
+            _memory,
+            _config,
+            maxHistoryTurns: 5,
+            turnRoutingPolicy: routing);
+
+        var session = new Session
+        {
+            Id = "sess-routing-directives",
+            SenderId = "user1",
+            ChannelId = "test-channel",
+            ReasoningEffort = "low",
+            ResponseMode = SessionResponseModes.ConciseOps,
+            FallbackModelProfileIds = ["existing-fallback"]
+        };
+
+        await agent.RunAsync(session, "analyze and propose plan", CancellationToken.None);
+
+        Assert.NotNull(capturedOptions);
+        Assert.NotNull(capturedOptions!.AdditionalProperties);
+        Assert.Equal("high", capturedOptions.AdditionalProperties!["reasoning_effort"]?.ToString());
+
+        Assert.Equal("low", session.ReasoningEffort);
+        Assert.Equal(SessionResponseModes.ConciseOps, session.ResponseMode);
+        Assert.Equal(["existing-fallback"], session.FallbackModelProfileIds);
     }
 
     [Fact]

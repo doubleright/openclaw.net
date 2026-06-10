@@ -84,6 +84,67 @@ Use provider `embedded` and a package-backed preset:
 
 For source checkouts, `openclaw setup --provider embedded --model-preset embedded-gemma-small-q4 --model gemma-local-small-q4` writes the keyless embedded profile.
 
+## Dynamic Turn Routing
+
+OpenClaw can classify each incoming user turn into `T0` through `T3` and map that turn onto existing model profiles.
+
+Current status:
+
+- Runtime wiring is implemented in both native and MAF orchestrator paths.
+- The ONNX router is optional and remains experimental for classifier quality.
+- Startup stays available when routing assets are unavailable; runtime falls back to `T2`.
+- Bundle loading is compat-first but not rigid: the loader can already resolve nested manifest asset paths and embedding dimensions when bundle metadata provides them.
+- Raw OpenSquilla v4.2 model directories still are not drop-in `BundlePath` inputs because the native package layout and inference pipeline do not match the current OpenClaw compat contract.
+- Tokenizer loading now supports Hugging Face-style BPE and WordPiece `tokenizer.json` files, but compatibility is still asset-specific and depends on supported pre-tokenizer shapes.
+
+Preferred configuration is bundle-first, then policy overrides:
+
+```json
+{
+  "OpenClaw": {
+    "DynamicTurnRouting": {
+      "Enabled": true,
+      "BundlePath": "models/routing/opensquilla-v4-compat",
+      "Policy": {
+        "EnableStickyTier": true,
+        "EnableMarginUpgrade": true,
+        "EnableUnderRoutingSafety": true,
+        "Tiers": {
+          "T0": { "ModelProfileId": "local-freeform", "DisableTools": true, "PromptMode": "minimal" },
+          "T1": { "ModelProfileId": "mini-readonly", "AllowedTools": ["read_file"], "PromptMode": "compact" },
+          "T2": {
+            "ModelProfileId": "frontier-tools",
+            "DirectModelFallbackProfileId": "frontier-tools-fallback",
+            "ReasoningLevel": "medium",
+            "ResponsePolicy": "balanced",
+            "ImageCapableModelProfileId": "frontier-vision",
+            "PromptMode": "full"
+          },
+          "T3": { "ModelProfileId": "frontier-deep", "PromptMode": "full" }
+        }
+      }
+    }
+  }
+}
+```
+
+`Policy.Tiers` is the supported tier-mapping location in modern configuration.
+
+Compatibility mode is still supported with direct `Assets.*` paths (`ClassifierModelPath`, `EmbeddingModelPath`, `TokenizerPath`) when you do not use `BundlePath`.
+
+For OpenSquilla interoperability, prefer pointing `BundlePath` at an explicit compat export such as `models/routing/opensquilla-v4-compat` rather than at the raw `v4.2_phase3_inference` directory. The main remaining gap is not tier naming but native pipeline shape: OpenClaw currently expects one embedding model plus one 4-class ONNX classifier, while OpenSquilla v4.2 uses a multi-stage fused router.
+
+Operator CLI surface for routing management:
+
+- [cli/routing.md](cli/routing.md)
+
+Fallback semantics:
+
+- missing/unavailable classifier assets: fallback to `T2` with machine-readable reason (for example `classifier_unavailable`)
+- runtime inference error: fallback to `T2` with machine-readable reason (for example `classifier_runtime_error`)
+
+This repository does not commit classifier or embedding binaries. Keep those artifacts in your local operator-managed model directory so the source tree stays small, auditable, and license-neutral.
+
 ## Sidecar Contract
 
 The embedded provider expects the sidecar to expose:

@@ -696,6 +696,43 @@ public static class ConfigValidator
             errors.Add($"Models.DefaultProfile '{config.Models.DefaultProfile}' does not exist in Models.Profiles.");
         }
 
+        if (config.DynamicTurnRouting.Enabled)
+        {
+            var policy = config.DynamicTurnRouting.Policy;
+            var tierMap = config.DynamicTurnRouting.Policy.Tiers;
+
+            if (policy.MarginUpgradeThreshold is < 0f or > 1f)
+                errors.Add("DynamicTurnRouting.Policy.MarginUpgradeThreshold must be between 0 and 1.");
+
+            if (policy.R1RescueThreshold is < 0f or > 1f)
+                errors.Add("DynamicTurnRouting.Policy.R1RescueThreshold must be between 0 and 1.");
+
+            if (policy.UnderRoutingSafetyThreshold is < 0f or > 1f)
+                errors.Add("DynamicTurnRouting.Policy.UnderRoutingSafetyThreshold must be between 0 and 1.");
+
+            if (policy.DeepConversationTurnIndexThreshold < 0)
+                errors.Add("DynamicTurnRouting.Policy.DeepConversationTurnIndexThreshold must be >= 0.");
+
+            var classifierPath = config.DynamicTurnRouting.Assets.ClassifierModelPath;
+            var embeddingPath = config.DynamicTurnRouting.Assets.EmbeddingModelPath;
+            var tokenizerPath = config.DynamicTurnRouting.Assets.TokenizerPath;
+
+            var usesBundlePath = !string.IsNullOrWhiteSpace(config.DynamicTurnRouting.BundlePath);
+            if (!usesBundlePath)
+            {
+                if (!string.IsNullOrWhiteSpace(classifierPath) && string.IsNullOrWhiteSpace(embeddingPath))
+                    errors.Add("DynamicTurnRouting requires an embedding model when classifier routing is enabled.");
+
+                if (!string.IsNullOrWhiteSpace(embeddingPath) && string.IsNullOrWhiteSpace(tokenizerPath))
+                    errors.Add("DynamicTurnRouting requires a tokenizer path when embeddings are configured.");
+            }
+
+            ValidateDynamicTurnRoutingTier("Policy.Tiers.T0", tierMap.T0, profileIds, errors);
+            ValidateDynamicTurnRoutingTier("Policy.Tiers.T1", tierMap.T1, profileIds, errors);
+            ValidateDynamicTurnRoutingTier("Policy.Tiers.T2", tierMap.T2, profileIds, errors);
+            ValidateDynamicTurnRoutingTier("Policy.Tiers.T3", tierMap.T3, profileIds, errors);
+        }
+
         foreach (var profile in config.Models.Profiles)
         {
             foreach (var fallbackId in profile.FallbackProfileIds.Where(static item => !string.IsNullOrWhiteSpace(item)))
@@ -716,6 +753,18 @@ public static class ConfigValidator
                     errors.Add($"Routing.Routes.{routeId}.FallbackModelProfileIds contains unknown profile '{fallbackId}'.");
             }
         }
+    }
+
+    private static void ValidateDynamicTurnRoutingTier(
+        string tierName,
+        DynamicTurnRoutingTierTarget target,
+        HashSet<string> profileIds,
+        List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(target.ModelProfileId) || profileIds.Contains(target.ModelProfileId))
+            return;
+
+        errors.Add($"DynamicTurnRouting.{tierName}.ModelProfileId '{target.ModelProfileId}' does not exist in Models.Profiles.");
     }
 
     private static string ResolveConfiguredPath(string? path)

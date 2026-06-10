@@ -242,6 +242,45 @@ public sealed class ModelProfileSelectionTests
     }
 
     [Fact]
+    public void SelectionPolicy_UsesProfileChosenByTurnRoutingDecision()
+    {
+        LlmClientFactory.ResetDynamicProviders();
+        LlmClientFactory.RegisterProvider("fake-profile-tests", new EvaluationChatClient());
+
+        var config = BuildProfileConfig();
+        var registry = new ConfiguredModelProfileRegistry(config, NullLogger<ConfiguredModelProfileRegistry>.Instance);
+        var policy = new DefaultModelSelectionPolicy(registry);
+        var session = new Session
+        {
+            Id = "s-route",
+            ChannelId = "test",
+            SenderId = "user",
+            ModelProfileId = "mini-readonly",
+            RouteModelTier = "T1"
+        };
+
+        var selection = policy.Resolve(new OpenClaw.Core.Abstractions.ModelSelectionRequest
+        {
+            Session = session,
+            Messages = [new ChatMessage(ChatRole.User, "Open README.md")],
+            Options = new ChatOptions
+            {
+                Tools =
+                [
+                    AIFunctionFactory.CreateDeclaration(
+                        "read_file",
+                        "Read a file",
+                        JsonDocument.Parse("""{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}""").RootElement.Clone(),
+                        returnJsonSchema: null)
+                ]
+            },
+            Streaming = false
+        });
+
+        Assert.Equal("mini-readonly", selection.SelectedProfileId);
+    }
+
+    [Fact]
     public void ConfigValidator_RejectsUnknownDefaultModelProfile()
     {
         var config = new GatewayConfig
@@ -878,6 +917,21 @@ public sealed class ModelProfileSelectionTests
                             SupportsImageInput = true,
                             SupportsVideoInput = true,
                             MaxContextTokens = 131072,
+                            MaxOutputTokens = 8192
+                        }
+                    },
+                    new ModelProfileConfig
+                    {
+                        Id = "mini-readonly",
+                        Provider = "fake-profile-tests",
+                        Model = "gpt-4.1-mini",
+                        Tags = ["cheap", "readonly"],
+                        Capabilities = new ModelCapabilities
+                        {
+                            SupportsTools = true,
+                            SupportsStreaming = true,
+                            SupportsSystemMessages = true,
+                            MaxContextTokens = 64000,
                             MaxOutputTokens = 8192
                         }
                     },

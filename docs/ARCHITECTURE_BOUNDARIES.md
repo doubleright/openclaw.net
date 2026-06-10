@@ -52,6 +52,16 @@ Examples include:
 
 Extensions should fail fast when unsupported in the active runtime mode.
 
+## Optional ONNX Boundaries
+
+Dynamic turn routing is implemented in `OpenClaw.Routing.Onnx`, not `OpenClaw.Core`.
+
+- `OpenClaw.Core` keeps only configuration and validation contracts.
+- `OpenClaw.Agent` knows only the routing interface and turn-scoped decision model.
+- `OpenClaw.Gateway` decides whether to compose the ONNX implementation.
+
+This keeps ONNX and tokenizer dependencies out of the core runtime path and preserves the repository's NativeAOT-first boundary discipline.
+
 ## AOT/JIT Boundary
 
 Core should remain AOT-friendly.

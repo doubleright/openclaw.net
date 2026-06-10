@@ -193,7 +193,7 @@ OpenClaw supports native routing for several providers out-of-the-box. Change th
 - **Provider**: `"embedded"`
 - **Required**: a verified local model package and a local sidecar runtime
 - **Recommended Setup**: `embedded-gemma-small-q4` for first-run private/offline helper tasks
-- **Notes**: OpenClaw owns package install/verify, cache paths, sidecar startup, health checks, and request mapping. Video support is frame-based: local `video/*` inputs are sampled into ordered image frames before the model call. LiteRT-LM packages are experimental and require an OpenClaw-compatible adapter binary. See [Embedded Local Models](LOCAL_MODELS.md).
+- **Notes**: OpenClaw owns package install/verify, cache paths, sidecar startup, health checks, and request mapping. Video support is frame-based: local `video/*` inputs are sampled into ordered image frames before the model call. LiteRT-LM packages are experimental and require an OpenClaw-compatible adapter binary. See [Embedded Local Models](LOCAL_MODELS.md). For the OpenSquilla-style turn-routing layer that can map `T0`-`T3` turns onto existing model profiles and tool allowlists, see [OpenSquilla Dynamic Turn Routing](opensquilla-dynamic-turn-routing.md).
 
 #### 5. Claude / Anthropic
 - **Provider**: `"anthropic"` or `"claude"`

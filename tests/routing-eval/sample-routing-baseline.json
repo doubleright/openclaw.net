@@ -1,0 +1,90 @@
+[
+  {
+    "id": "routing.sample.01",
+    "prompt": "Summarize the latest release notes and keep it short.",
+    "expectedTier": "T1",
+    "ruleOnlyTier": "T1",
+    "classifierTier": "T2",
+    "combinedTier": "T1",
+    "riskFlags": ["docs", "low-risk"],
+    "rationale": "Short informational requests should stay in T1 unless another signal escalates.",
+    "source": "synthetic"
+  },
+  {
+    "id": "routing.sample.02",
+    "prompt": "Draft a rollback checklist for a production deployment.",
+    "expectedTier": "T2",
+    "ruleOnlyTier": "T2",
+    "classifierTier": "T1",
+    "combinedTier": "T2",
+    "riskFlags": ["ops", "change-management"],
+    "rationale": "Operational planning needs the safer tool-capable tier.",
+    "source": "synthetic"
+  },
+  {
+    "id": "routing.sample.03",
+    "prompt": "Review this architecture note and suggest improvements.",
+    "expectedTier": "T1",
+    "ruleOnlyTier": "T0",
+    "classifierTier": "T1",
+    "combinedTier": "T1",
+    "riskFlags": ["analysis"],
+    "rationale": "Analytical review benefits from T1 even when the conservative rule layer is under-sensitive.",
+    "source": "synthetic"
+  },
+  {
+    "id": "routing.sample.04",
+    "prompt": "Generate a test plan for the shell command wrapper and include a safety gate.",
+    "expectedTier": "T2",
+    "ruleOnlyTier": "T2",
+    "classifierTier": "T3",
+    "combinedTier": "T2",
+    "riskFlags": ["safety", "tooling"],
+    "rationale": "Tool-adjacent requests should avoid over-escalation while remaining guarded.",
+    "source": "synthetic"
+  },
+  {
+    "id": "routing.sample.05",
+    "prompt": "Continue the long-running debugging thread and keep prior context in mind.",
+    "expectedTier": "T1",
+    "ruleOnlyTier": "T1",
+    "classifierTier": "T0",
+    "combinedTier": "T1",
+    "riskFlags": ["deep-context"],
+    "rationale": "Deep conversations should not drop below T1.",
+    "source": "synthetic"
+  },
+  {
+    "id": "routing.sample.06",
+    "prompt": "Prepare a migration runbook with rollback instructions and verification steps.",
+    "expectedTier": "T3",
+    "ruleOnlyTier": "T2",
+    "classifierTier": "T3",
+    "combinedTier": "T3",
+    "riskFlags": ["high-risk", "ops", "verification"],
+    "rationale": "High-risk operational work should be promoted to T3.",
+    "source": "synthetic"
+  },
+  {
+    "id": "routing.sample.07",
+    "prompt": "Write a concise answer explaining the API contract.",
+    "expectedTier": "T0",
+    "ruleOnlyTier": "T0",
+    "classifierTier": "T1",
+    "combinedTier": "T0",
+    "riskFlags": ["direct-answer"],
+    "rationale": "Direct answer generation should stay on the lowest tier.",
+    "source": "synthetic"
+  },
+  {
+    "id": "routing.sample.08",
+    "prompt": "Compare two deployment strategies and highlight the tradeoffs.",
+    "expectedTier": "T2",
+    "ruleOnlyTier": "T1",
+    "classifierTier": "T2",
+    "combinedTier": "T2",
+    "riskFlags": ["planning", "analysis"],
+    "rationale": "Tradeoff analysis with operational implications should land in T2.",
+    "source": "synthetic"
+  }
+]

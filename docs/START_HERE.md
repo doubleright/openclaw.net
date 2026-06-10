@@ -116,6 +116,7 @@ OpenClaw.NET is not a full upstream OpenClaw clone. Unsupported or JIT-only surf
 | --- | --- |
 | Run a real local gateway | [QUICKSTART.md](QUICKSTART.md) |
 | Understand repository shape | [GETTING_STARTED.md](GETTING_STARTED.md) |
+| Understand OpenSquilla-style turn routing | [opensquilla-dynamic-turn-routing.md](opensquilla-dynamic-turn-routing.md) |
 | Check capability lanes | [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md) |
 | Check compatibility | [COMPATIBILITY.md](COMPATIBILITY.md) |
 | Use tools and skills | [USER_GUIDE.md](USER_GUIDE.md) and [TOOLS_GUIDE.md](TOOLS_GUIDE.md) |

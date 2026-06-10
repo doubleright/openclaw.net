@@ -1,0 +1,67 @@
+{"text":"Summarize this issue in one sentence.","goldTier":"T0","highRisk":false}
+{"text":"Translate this paragraph to English.","goldTier":"T0","highRisk":false}
+{"text":"Rewrite this commit message to be clearer.","goldTier":"T0","highRisk":false}
+{"text":"Give me a two-line status update.","goldTier":"T0","highRisk":false}
+{"text":"Extract three action items from this note.","goldTier":"T0","highRisk":false}
+{"text":"List all TODO markers from this snippet.","goldTier":"T0","highRisk":false}
+{"text":"Convert this bullet list into a checklist.","goldTier":"T0","highRisk":false}
+{"text":"Shorten this sentence without changing meaning.","goldTier":"T0","highRisk":false}
+{"text":"Correct grammar in this text only.","goldTier":"T0","highRisk":false}
+{"text":"Provide a concise title for this document.","goldTier":"T0","highRisk":false}
+{"text":"Turn this paragraph into plain language.","goldTier":"T0","highRisk":false}
+{"text":"Generate a one-line release note.","goldTier":"T0","highRisk":false}
+{"text":"Make this sentence more polite.","goldTier":"T0","highRisk":false}
+{"text":"Return only the JSON keys from this object.","goldTier":"T0","highRisk":false}
+{"text":"Split this sentence into two shorter ones.","goldTier":"T0","highRisk":false}
+{"text":"Provide a direct yes or no answer only.","goldTier":"T0","highRisk":false}
+
+{"text":"Read README and list core modules.","goldTier":"T1","highRisk":false}
+{"text":"Compare two API designs and recommend one.","goldTier":"T1","highRisk":false}
+{"text":"Draft a three-step migration plan for this package.","goldTier":"T1","highRisk":false}
+{"text":"Review this function and suggest simplifications.","goldTier":"T1","highRisk":false}
+{"text":"Analyze tradeoffs between caching and pagination here.","goldTier":"T1","highRisk":false}
+{"text":"Outline a lightweight testing strategy for this module.","goldTier":"T1","highRisk":false}
+{"text":"Suggest boundaries for this service decomposition.","goldTier":"T1","highRisk":false}
+{"text":"Identify assumptions in this integration proposal.","goldTier":"T1","highRisk":false}
+{"text":"Propose naming conventions for these new endpoints.","goldTier":"T1","highRisk":false}
+{"text":"Audit this prompt template for ambiguity.","goldTier":"T1","highRisk":false}
+{"text":"Provide a rollout checklist for this feature flag.","goldTier":"T1","highRisk":false}
+{"text":"Create acceptance criteria for this user story.","goldTier":"T1","highRisk":false}
+{"text":"Summarize architecture boundaries for this component.","goldTier":"T1","highRisk":false}
+{"text":"Recommend logging fields for this workflow.","goldTier":"T1","highRisk":false}
+{"text":"Suggest a safer retry policy for these calls.","goldTier":"T1","highRisk":false}
+{"text":"Explain this design to a new team member.","goldTier":"T1","highRisk":false}
+
+{"text":"Assess deployment rollback risk before production release.","goldTier":"T2","highRisk":true}
+{"text":"Production API is timing out; help debug root cause quickly.","goldTier":"T2","highRisk":true}
+{"text":"Investigate exception stack trace and identify likely failing layer.","goldTier":"T2","highRisk":true}
+{"text":"Review this data migration script for overwrite risk.","goldTier":"T2","highRisk":true}
+{"text":"Check this delete job for accidental broad match behavior.","goldTier":"T2","highRisk":true}
+{"text":"We saw partial writes in prod, propose safe recovery steps.","goldTier":"T2","highRisk":true}
+{"text":"Analyze incident timeline and identify highest-risk gap.","goldTier":"T2","highRisk":true}
+{"text":"Evaluate canary failure and decide rollback or continue.","goldTier":"T2","highRisk":true}
+{"text":"Inspect this auth change for privilege escalation risk.","goldTier":"T2","highRisk":true}
+{"text":"Review SQL update script for destructive edge cases.","goldTier":"T2","highRisk":true}
+{"text":"Assess operational risk of changing queue visibility timeout.","goldTier":"T2","highRisk":true}
+{"text":"Find probable root cause for memory leak after deploy.","goldTier":"T2","highRisk":true}
+{"text":"Estimate blast radius if this feature toggle is misconfigured.","goldTier":"T2","highRisk":true}
+{"text":"Audit this backup restore runbook for missing safeguards.","goldTier":"T2","highRisk":true}
+{"text":"Check this hotfix plan for race condition risk.","goldTier":"T2","highRisk":true}
+{"text":"Assess security impact of disabling certificate validation temporarily.","goldTier":"T2","highRisk":true}
+
+{"text":"Provide a full architecture redesign plan with milestones and risk matrix.","goldTier":"T3","highRisk":false}
+{"text":"Write a comprehensive technical strategy for multi-region failover, including goals, constraints, phased delivery, ownership model, dependencies, security implications, validation gates, and explicit rollback criteria for each milestone.","goldTier":"T3","highRisk":true}
+{"text":"Create a detailed roadmap comparing three platform options, include cost model assumptions, migration sequencing, capability gaps, stakeholder impact, staffing plan, and measurable success criteria.","goldTier":"T3","highRisk":false}
+{"text":"Design an end-to-end operating model for this system with governance boundaries, incident response responsibilities, SLA tiers, escalation paths, and quarterly review checkpoints.","goldTier":"T3","highRisk":false}
+{"text":"Develop a complete modernization proposal spanning architecture principles, decomposition strategy, data contract evolution, rollout safety controls, observability standards, and long-term maintenance risks.","goldTier":"T3","highRisk":false}
+{"text":"Prepare an extensive competitive analysis and strategic positioning report with technical differentiators, implementation tradeoffs, timeline uncertainty, and mitigation options.","goldTier":"T3","highRisk":false}
+{"text":"Create a long-form plan for replacing legacy workflow orchestration with policy-driven routing, including transition architecture, compatibility layer design, pilot scope, and cutover checkpoints.","goldTier":"T3","highRisk":false}
+{"text":"Draft a deeply detailed governance framework for AI-assisted code operations, covering approval flows, audit evidence, exception handling, and policy lifecycle management.","goldTier":"T3","highRisk":true}
+{"text":"Propose a comprehensive transformation blueprint for release engineering with maturity levels, process metrics, ownership handoffs, and tooling investment priorities.","goldTier":"T3","highRisk":false}
+{"text":"Build a full technical due diligence report for this architecture, including threat model assumptions, resilience posture, data integrity controls, and unresolved critical questions.","goldTier":"T3","highRisk":true}
+{"text":"Author a complete enterprise integration strategy that aligns domain boundaries, shared contracts, data lifecycle controls, and phased migration governance across teams.","goldTier":"T3","highRisk":false}
+{"text":"Produce a deeply structured proposal for policy-as-code adoption with capability milestones, rollout sequencing, compliance checkpoints, and measured decision quality goals.","goldTier":"T3","highRisk":false}
+{"text":"Design a full lifecycle operating handbook for production AI routing, covering experimentation guardrails, evaluation methodology, deployment approvals, and continuous improvement loops.","goldTier":"T3","highRisk":true}
+{"text":"Write an exhaustive architecture review package with context, assumptions, alternatives, impact analysis, failure modes, and executive-level recommendation narrative.","goldTier":"T3","highRisk":false}
+{"text":"Create a complete implementation master plan for cross-team platform consolidation with risk heatmap, dependency mapping, phased milestones, and acceptance criteria.","goldTier":"T3","highRisk":false}
+{"text":"Develop a full governance and reliability blueprint for mission-critical release workflows, including policy controls, exception routing, and auditable evidence requirements.","goldTier":"T3","highRisk":true}

@@ -7,6 +7,7 @@ using OpenClaw.Agent;
 using OpenClaw.Agent.Execution;
 using OpenClaw.Agent.Memory;
 using OpenClaw.Agent.Plugins;
+using OpenClaw.Agent.Routing;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.ExternalCli;
 using OpenClaw.Core.Features;
@@ -24,12 +25,14 @@ using OpenClaw.Gateway.Mcp;
 using OpenClaw.Gateway.Models;
 using OpenClaw.Gateway.Pipeline;
 using OpenClaw.Gateway.PromptCaching;
+using OpenClaw.Gateway.Routing;
 using OpenClaw.Gateway.Workflows;
 using OpenClaw.Core.Validation;
 using OpenClaw.PluginKit;
 using OpenClaw.Payments.Abstractions;
 using OpenClaw.Payments.Core;
 using OpenClaw.Payments.StripeLink;
+using OpenClaw.Routing.Onnx;
 using TickerQ.DependencyInjection;
 
 namespace OpenClaw.Gateway.Composition;
@@ -128,6 +131,20 @@ internal static class CoreServicesExtensions
         services.AddSingleton<ConfiguredModelProfileRegistry>();
         services.AddSingleton<IModelProfileRegistry>(sp => sp.GetRequiredService<ConfiguredModelProfileRegistry>());
         services.AddSingleton<IModelSelectionPolicy, DefaultModelSelectionPolicy>();
+        services.AddSingleton(sp =>
+            DynamicTurnRoutingConfigNormalizer.Normalize(
+                config.DynamicTurnRouting,
+                new OpenSquillaBundleLoader()));
+        services.AddSingleton<ITurnRoutingPolicy>(sp =>
+        {
+            var resolvedRoutingConfig = sp.GetRequiredService<ResolvedDynamicTurnRoutingConfig>();
+            if (!resolvedRoutingConfig.Enabled)
+                return NoopTurnRoutingPolicy.Instance;
+
+            return new OnnxTurnRoutingPolicy(
+                resolvedRoutingConfig,
+                sp.GetRequiredService<ILogger<OnnxTurnRoutingPolicy>>());
+        });
         services.AddSingleton<ModelEvaluationRunner>();
         services.AddSingleton<PromptCacheTraceWriter>();
         services.AddSingleton<PromptCacheCoordinator>();

@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using OpenClaw.Agent.Routing;
 using OpenClaw.Core.Abstractions;
 using OpenClaw.Core.Models;
 using OpenClaw.Core.Plugins;
@@ -15,6 +16,177 @@ namespace OpenClaw.Tests;
 
 public sealed class CoreServicesExtensionsTests
 {
+    [Fact]
+    public void AddOpenClawCoreServices_RegistersResolvedDynamicTurnRoutingConfig_WithNormalizerPrecedence()
+    {
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempPath);
+        try
+        {
+            var bundlePath = Path.Join(tempPath, "router-bundle");
+            var config = new GatewayConfig
+            {
+                Memory = new MemoryConfig
+                {
+                    StoragePath = tempPath
+                },
+                DynamicTurnRouting = new DynamicTurnRoutingConfig
+                {
+                    Enabled = true,
+                    BundlePath = bundlePath,
+                    Assets = new DynamicTurnRoutingAssetsConfig
+                    {
+                        ClassifierModelPath = "override/classifier.onnx"
+                    },
+                    Policy = new DynamicTurnRoutingPolicyConfig
+                    {
+                        EnableStickyTier = false
+                    }
+                }
+            };
+
+            var startup = new GatewayStartupContext
+            {
+                Config = config,
+                RuntimeState = new GatewayRuntimeState
+                {
+                    RequestedMode = "jit",
+                    EffectiveMode = GatewayRuntimeMode.Jit,
+                    DynamicCodeSupported = true
+                },
+                IsNonLoopbackBind = false
+            };
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddOptions();
+            services.AddOpenClawCoreServices(startup);
+
+            using var provider = services.BuildServiceProvider();
+            var resolved = provider.GetRequiredService<ResolvedDynamicTurnRoutingConfig>();
+
+            Assert.True(resolved.Enabled);
+            Assert.Equal("bundle", resolved.Source);
+            Assert.Equal("override/classifier.onnx", resolved.Assets.ClassifierModelPath);
+            Assert.Equal(Path.Join(bundlePath, "embeddings.onnx"), resolved.Assets.EmbeddingModelPath);
+            Assert.Equal(Path.Join(bundlePath, "tokenizer.json"), resolved.Assets.TokenizerPath);
+            Assert.Equal(384, resolved.Assets.EmbeddingDimensions);
+            Assert.False(resolved.Policy.EnableStickyTier);
+            Assert.True(resolved.Policy.EnableMarginUpgrade);
+            Assert.True(resolved.Policy.EnableUnderRoutingSafety);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(tempPath);
+        }
+    }
+
+    [Fact]
+    public void AddOpenClawCoreServices_DisabledDynamicTurnRouting_UsesNoopRoutingPolicy()
+    {
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempPath);
+        try
+        {
+            var config = new GatewayConfig
+            {
+                Memory = new MemoryConfig
+                {
+                    StoragePath = tempPath
+                },
+                DynamicTurnRouting = new DynamicTurnRoutingConfig
+                {
+                    Enabled = false
+                }
+            };
+
+            var startup = new GatewayStartupContext
+            {
+                Config = config,
+                RuntimeState = new GatewayRuntimeState
+                {
+                    RequestedMode = "jit",
+                    EffectiveMode = GatewayRuntimeMode.Jit,
+                    DynamicCodeSupported = true
+                },
+                IsNonLoopbackBind = false
+            };
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddOptions();
+            services.AddOpenClawCoreServices(startup);
+
+            using var provider = services.BuildServiceProvider();
+            var routingPolicy = provider.GetRequiredService<ITurnRoutingPolicy>();
+
+            Assert.Same(NoopTurnRoutingPolicy.Instance, routingPolicy);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(tempPath);
+        }
+    }
+
+    [Fact]
+    public void AddOpenClawCoreServices_NoBundlePath_UsesDirectAssetsInResolvedConfig()
+    {
+        var tempPath = Path.Join(Path.GetTempPath(), "openclaw-core-services-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempPath);
+        try
+        {
+            var config = new GatewayConfig
+            {
+                Memory = new MemoryConfig
+                {
+                    StoragePath = tempPath
+                },
+                DynamicTurnRouting = new DynamicTurnRoutingConfig
+                {
+                    Enabled = true,
+                    Assets = new DynamicTurnRoutingAssetsConfig
+                    {
+                        ClassifierModelPath = "direct/classifier.onnx",
+                        EmbeddingModelPath = "direct/embeddings.onnx",
+                        TokenizerPath = "direct/tokenizer.json",
+                        Dimensions = 256
+                    }
+                }
+            };
+
+            var startup = new GatewayStartupContext
+            {
+                Config = config,
+                RuntimeState = new GatewayRuntimeState
+                {
+                    RequestedMode = "jit",
+                    EffectiveMode = GatewayRuntimeMode.Jit,
+                    DynamicCodeSupported = true
+                },
+                IsNonLoopbackBind = false
+            };
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddOptions();
+            services.AddOpenClawCoreServices(startup);
+
+            using var provider = services.BuildServiceProvider();
+            var resolved = provider.GetRequiredService<ResolvedDynamicTurnRoutingConfig>();
+
+            Assert.True(resolved.Enabled);
+            Assert.Equal("direct", resolved.Source);
+            Assert.Equal("direct/classifier.onnx", resolved.Assets.ClassifierModelPath);
+            Assert.Equal("direct/embeddings.onnx", resolved.Assets.EmbeddingModelPath);
+            Assert.Equal("direct/tokenizer.json", resolved.Assets.TokenizerPath);
+            Assert.Equal(256, resolved.Assets.EmbeddingDimensions);
+        }
+        finally
+        {
+            DeleteDirectoryIfPresent(tempPath);
+        }
+    }
+
     [Fact]
     public void AddOpenClawCoreServices_RegistersLearningConfigForLearningService()
     {

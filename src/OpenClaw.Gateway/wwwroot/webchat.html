@@ -666,6 +666,10 @@
             margin: 0 1.25rem;
         }
 
+        .banner[hidden] {
+            display: none !important;
+        }
+
         .banner--info {
             border-color: var(--info);
             background: var(--info-soft);
@@ -1486,6 +1490,10 @@
             transition: opacity 180ms var(--ease);
         }
 
+        .backdrop[hidden] {
+            display: none !important;
+        }
+
         .backdrop[data-open="true"] {
             opacity: 1;
         }
@@ -1504,6 +1512,10 @@
             flex-direction: column;
             transform: translateX(100%);
             transition: transform 220ms var(--ease);
+        }
+
+        .drawer[hidden] {
+            display: none !important;
         }
 
         .drawer[data-open="true"] {
@@ -1630,6 +1642,10 @@
             align-items: center;
             justify-content: center;
             padding: 1rem;
+        }
+
+        .modal-backdrop[hidden] {
+            display: none !important;
         }
 
         .modal-card {
