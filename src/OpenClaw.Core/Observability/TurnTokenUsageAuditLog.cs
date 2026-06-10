@@ -12,13 +12,17 @@ namespace OpenClaw.Core.Observability;
 /// </summary>
 public sealed class TurnTokenUsageAuditLog : ITurnTokenUsageObserver, IDisposable
 {
+    private const int DefaultAuditQueueCapacity = 4096;
     private readonly string? _filePath;
     private readonly ILogger<TurnTokenUsageAuditLog>? _logger;
     private readonly Channel<string>? _lineChannel;
     private readonly Task? _writerTask;
     private int _disposed;
 
-    public TurnTokenUsageAuditLog(string? filePath, ILogger<TurnTokenUsageAuditLog>? logger = null)
+    public TurnTokenUsageAuditLog(
+        string? filePath,
+        ILogger<TurnTokenUsageAuditLog>? logger = null,
+        int auditQueueCapacity = DefaultAuditQueueCapacity)
     {
         _logger = logger;
         if (string.IsNullOrWhiteSpace(filePath))
@@ -32,11 +36,12 @@ public sealed class TurnTokenUsageAuditLog : ITurnTokenUsageObserver, IDisposabl
                 Directory.CreateDirectory(directory);
             _filePath = fullPath;
 
-            _lineChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+            _lineChannel = Channel.CreateBounded<string>(new BoundedChannelOptions(Math.Max(1, auditQueueCapacity))
             {
                 SingleReader = true,
                 SingleWriter = false,
-                AllowSynchronousContinuations = false
+                AllowSynchronousContinuations = false,
+                FullMode = BoundedChannelFullMode.Wait
             });
             _writerTask = Task.Run(() => WriteLoopAsync(fullPath, _lineChannel.Reader));
         }
@@ -61,9 +66,7 @@ public sealed class TurnTokenUsageAuditLog : ITurnTokenUsageObserver, IDisposabl
         {
             var json = JsonSerializer.Serialize(record, TurnTokenUsageJsonContext.Default.TurnTokenUsageRecord);
             if (!lineChannel.Writer.TryWrite(json))
-            {
-                _logger?.LogWarning("Failed to enqueue turn token usage entry for session {SessionId}", record.SessionId);
-            }
+                lineChannel.Writer.WriteAsync(json).AsTask().GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {

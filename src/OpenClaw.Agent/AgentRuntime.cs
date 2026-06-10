@@ -376,7 +376,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 return ex.Message;
             }
 
-            catch (Exception ex)
+            catch (Exception ex) when (IsExpectedLlmFailure(ex))
             {
                 _metrics?.IncrementLlmErrors();
                 _logger?.LogError(ex, "[{CorrelationId}] LLM call failed after all retries and fallbacks", turnCtx.CorrelationId);
@@ -1116,7 +1116,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 LogTurnComplete(turnCtx);
                 return result;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsExpectedLlmFailure(ex))
             {
                 _metrics?.IncrementLlmErrors();
                 _logger?.LogError(ex, "[{CorrelationId}] Streaming LLM call failed after all retries and fallbacks", turnCtx.CorrelationId);
@@ -1219,7 +1219,7 @@ public sealed class AgentRuntime : IAgentRuntime
             {
                 throw; // External cancellation, propagate immediately
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsExpectedLlmFailure(ex))
             {
                 lastException = ex;
                 _providerUsage?.RecordError(_config.Provider, model);
@@ -1506,6 +1506,30 @@ public sealed class AgentRuntime : IAgentRuntime
 
         // IOException / SocketException are often transient network issues
         return ex is System.IO.IOException or System.Net.Sockets.SocketException;
+    }
+
+    private static bool IsExpectedLlmFailure(Exception ex)
+        => ex is HttpRequestException
+            or TimeoutException
+            or OperationCanceledException
+            or System.IO.IOException
+            or System.Net.Sockets.SocketException
+            || ex is InvalidOperationException invalidOperation && IsExpectedLlmInvalidOperation(invalidOperation);
+
+    private static bool IsExpectedLlmInvalidOperation(InvalidOperationException ex)
+    {
+        if (ex.InnerException is not null && IsExpectedLlmFailure(ex.InnerException))
+            return true;
+
+        var message = ex.Message;
+        return message.Contains("LLM", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("provider", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("model", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("credential", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("API key", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("endpoint", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("token budget", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("route execution failed", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1973,6 +1997,7 @@ public sealed class AgentRuntime : IAgentRuntime
         }
         else if (decision.AllowedTools.Length > 0)
         {
+            session.RouteToolsDisabled = false;
             session.RouteAllowedTools = decision.AllowedTools;
         }
         session.RouteModelTier = decision.Tier;

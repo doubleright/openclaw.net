@@ -121,7 +121,8 @@ internal static class CoreServicesExtensions
         services.AddSingleton<ProviderUsageTracker>();
         services.AddSingleton(sp => new TurnTokenUsageAuditLog(
             Path.Combine(Path.GetFullPath(config.Memory.StoragePath), "audit", "turn-token-usage.jsonl"),
-            sp.GetRequiredService<ILogger<TurnTokenUsageAuditLog>>()));
+            sp.GetRequiredService<ILogger<TurnTokenUsageAuditLog>>(),
+            auditQueueCapacity: 4096));
         services.AddSingleton<ITurnTokenUsageObserver>(sp =>
             new CompositeTurnTokenUsageObserver([
                 new ProviderUsageTurnTokenUsageObserver(sp.GetRequiredService<ProviderUsageTracker>()),

@@ -639,6 +639,7 @@ public sealed class MafAgentRuntime : IAgentRuntime
         }
         else if (decision.AllowedTools.Length > 0)
         {
+            session.RouteToolsDisabled = false;
             session.RouteAllowedTools = decision.AllowedTools;
         }
         session.RouteModelTier = decision.Tier;

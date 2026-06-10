@@ -330,7 +330,7 @@ public sealed class ObservabilityTests
 
         try
         {
-            using (var observer = new TurnTokenUsageAuditLog(filePath))
+            using (var observer = new TurnTokenUsageAuditLog(filePath, auditQueueCapacity: 16))
             {
                 var tasks = Enumerable.Range(0, totalWrites)
                     .Select(i => Task.Run(() =>

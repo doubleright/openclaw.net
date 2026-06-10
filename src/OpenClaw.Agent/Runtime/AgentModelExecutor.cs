@@ -177,7 +177,7 @@ internal sealed class AgentModelExecutor
                 result.Error = ex.Message;
                 return result;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsExpectedLlmFailure(ex))
             {
                 _accounting.IncrementLlmErrors();
                 _logger?.LogError(ex, "[{CorrelationId}] Streaming LLM call failed after all retries and fallbacks", turnCtx.CorrelationId);
@@ -251,7 +251,7 @@ internal sealed class AgentModelExecutor
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (IsExpectedLlmFailure(ex))
             {
                 lastException = ex;
                 _accounting.RecordProviderError(_config.Provider, model);
@@ -340,5 +340,29 @@ internal sealed class AgentModelExecutor
         }
 
         return ex is IOException or System.Net.Sockets.SocketException;
+    }
+
+    private static bool IsExpectedLlmFailure(Exception ex)
+        => ex is HttpRequestException
+            or TimeoutException
+            or OperationCanceledException
+            or IOException
+            or System.Net.Sockets.SocketException
+            || ex is InvalidOperationException invalidOperation && IsExpectedLlmInvalidOperation(invalidOperation);
+
+    private static bool IsExpectedLlmInvalidOperation(InvalidOperationException ex)
+    {
+        if (ex.InnerException is not null && IsExpectedLlmFailure(ex.InnerException))
+            return true;
+
+        var message = ex.Message;
+        return message.Contains("LLM", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("provider", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("model", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("credential", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("API key", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("endpoint", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("token budget", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("route execution failed", StringComparison.OrdinalIgnoreCase);
     }
 }
